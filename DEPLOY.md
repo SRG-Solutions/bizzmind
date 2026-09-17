@@ -13,7 +13,7 @@
 `ANTHROPIC_API_KEY` + `AI_BACKEND=api` (продукция), `GAMMA_API_KEY`, `COOKIE_SECURE=1`.
 
 ## Vercel — как е вързано
-- И двата проекта са свързани с GitHub `pwwned/bizzmind`: push в `main` = деплой на двата.
+- И двата проекта са свързани с GitHub `SRG-Solutions/bizzmind`: push в `main` = деплой на двата.
 - Rewrite `/(.*)` → `/api/index.py?__path=$1`; `bizzmind/path_restore.py` възстановява пътя (Vercel не подава оригиналния).
 - Data dir на Vercel е `/tmp/bizzmind` (кеш, пълни се от Supabase Storage).
 - Web env се задава през REST API (CLI-ят се обърква от rootDirectory).
