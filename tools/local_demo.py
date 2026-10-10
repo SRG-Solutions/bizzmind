@@ -69,7 +69,7 @@ def build_app():
     from fastapi.responses import JSONResponse, RedirectResponse
     import auth
     from bizzmind import plans
-    from bizzmind.routes import projects, auth_routes, export_routes
+    from bizzmind.routes import projects, auth_routes, export_routes, brand_routes
     # Process-local limits only. Usage is still tracked in the isolated DB.
     plans.PLANS["ultra"] = {**plans.PLANS["ultra"], "projects": 1000000000,
                             "files_per_project": 1000000000, "monthly": False}
@@ -81,6 +81,7 @@ def build_app():
         return response
 
     app.include_router(projects.router)
+    app.include_router(brand_routes.router)
     # Only read-only account endpoints: no payments, invitations or auth writes.
     for router, paths in ((auth_routes.router, {"/api/auth/me", "/api/account", "/api/plans"}),
                           (export_routes.router, {"/api/p/{pid}/pres/credits"})):
