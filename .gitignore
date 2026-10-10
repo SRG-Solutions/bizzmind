@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 # secrets & runtime
 .env
+.codex/
 server.log
 .DS_Store
 # client data: projects, uploads, sessions, users — never in git
