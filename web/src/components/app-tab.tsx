@@ -397,7 +397,19 @@ export function AppTab({ pid, hasTables, onAskChat }: {
       </aside>
       <div className="min-w-0 space-y-5">
         {onAskChat&&<form onSubmit={e=>{e.preventDefault();if(design.trim())ask(design);}} className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-start gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-olive/10 text-olive"><Sparkles className="size-4"/></span><Textarea ref={designInput} aria-label={t('app_design')} placeholder={t('app_design_ph')} value={design} onChange={e=>setDesign(e.target.value)} className="min-h-16 resize-none border-0 bg-transparent p-1 shadow-none focus-visible:ring-0"/></div><div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3"><span className="text-xs text-muted-foreground">{t('app_design_hint')}</span><Button disabled={!design.trim()} type="submit" className="grad-olive text-primary-foreground"><ArrowUpRight className="size-4"/>{t('app_design_send')}</Button></div></form>}
-        <div className="grid gap-5 xl:grid-cols-2">{views.map((v,i)=>{if(focused!==null&&focused!==i)return null;return <div key={`${i}:${v.title}`} className={focused===null&&v.width==='half'?'xl:col-span-1':'xl:col-span-2'}><Foldable view={focused===i?{...v,collapsed:false}:v} key={`${i}:${focused===i}`} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:v.title})):undefined}>{v.type==='kpi'?<KpiView pid={pid} view={v} inFold={!!v.collapsible}/>:v.type==='entry'?<EntryView pid={pid} view={v} inFold={!!v.collapsible}/>:v.type==='chart'?<AppChartView pid={pid} view={v}/>:<TableView pid={pid} view={v} inFold={!!v.collapsible}/>}</Foldable></div>;})}</div>
+        {focused === null ? <section className="space-y-5" aria-label={t('app_all_sections')}>
+          <div className="rounded-2xl border border-olive/20 bg-olive/5 p-6">
+            <h3 className="text-xl font-semibold">{t('app_overview_title')}</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">{t('app_overview_hint')}</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{views.map((v,i)=>{const Icon=sectionIcon(v.type);return <button key={i} onClick={()=>setActiveSection(i)} className="group flex min-h-52 flex-col rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-olive/50 hover:bg-olive/5">
+            <div className="mb-4 flex w-full items-center justify-between"><span className="rounded-xl bg-olive/10 p-2.5 text-olive"><Icon className="size-5"/></span><span className="text-[11px] font-medium text-muted-foreground">{t(`app_kind_${v.type}` as Key)}</span></div>
+            <h4 className="text-sm font-semibold leading-relaxed">{v.title}</h4>
+            <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">{v.hint || t(`app_overview_${v.type}` as Key)}</p>
+            <span className="mt-auto flex items-center gap-2 pt-5 text-xs font-semibold text-olive">{t('app_open_section')}<ArrowUpRight className="size-3.5"/></span>
+          </button>;})}</div>
+        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
+
         {spec?.generated_at&&<p className="text-[11px] text-muted-foreground">{t('app_generated',{at:spec.generated_at})}</p>}
       </div>
     </div>
