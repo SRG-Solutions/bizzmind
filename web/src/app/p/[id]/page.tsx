@@ -32,6 +32,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [tab, setTab] = useState<Tab>("dash");
   const [selections, setSelections] = useState<Selections>({});
   const [chatOpen, setChatOpen] = useState(false);
+  const [appChatOpen, setAppChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState<string | null>(null);
   const [pendingReview, setPendingReview] = useState<{ tables: string[] } | null>(null);
   const uploadRef = useRef<(() => void) | null>(null);
@@ -203,8 +204,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             )
           ) : tab === "app" ? (
             <AppTab pid={pid} hasTables={state.data.tables.length > 0}
-              onAskChat={(p) => { setChatSeed(p); }}
-              builder={<ChatPanel key="app-builder" pid={pid} initial={state.data.chat} open={true} onOpenChange={()=>{}} embedded scope="app" seed={chatSeed} onSeedUsed={()=>setChatSeed(null)} />} />
+              onAskChat={(p) => { setChatSeed(p); setAppChatOpen(true); }} />
           ) : tab === "files" ? (
             <FilesTab pid={pid} state={state.data as ProjectState} uploadRef={uploadRef}
               onUploaded={(tables) => { setPendingReview({ tables }); }} />
@@ -213,10 +213,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           )}
         </main>
       </div>
-      {state.data && tab !== "app" && (
-        <ChatPanel pid={pid} initial={state.data.chat} open={chatOpen} onOpenChange={setChatOpen} pending={pendingReview}
+      {state.data && (tab === "app" ? (
+        <ChatPanel key="app-builder" pid={pid} initial={state.data.chat} open={appChatOpen} onOpenChange={setAppChatOpen} scope="app" seed={chatSeed} onSeedUsed={()=>setChatSeed(null)} />
+      ) : (
+        <ChatPanel key="dashboard-chat" pid={pid} initial={state.data.chat} open={chatOpen} onOpenChange={setChatOpen} pending={pendingReview}
           seed={chatSeed} onSeedUsed={() => setChatSeed(null)} />
-      )}
+      ))}
     </>
   );
 }

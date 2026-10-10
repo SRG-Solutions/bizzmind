@@ -1,7 +1,7 @@
 "use client";
 /* The project's mini-app: an AI-designed working surface over the same data —
    entry forms, live KPIs and lists that replace the spreadsheet routine. */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, cacheGet, cacheSet, useCachedPlaceholder, cancelJob, endpoints, JobCancelled, p as apiPath, runJob } from "@/lib/api";
@@ -215,8 +215,7 @@ function Foldable({ view, children, onEdit }: { view: View; children: React.Reac
   );
 }
 
-export function AppTab({ pid, hasTables, onAskChat, builder }: {
-  builder?: ReactNode;
+export function AppTab({ pid, hasTables, onAskChat }: {
   pid: string; hasTables: boolean; onAskChat?: (prompt: string) => void;
 }) {
   const t = useT();
@@ -421,7 +420,6 @@ export function AppTab({ pid, hasTables, onAskChat, builder }: {
       <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={removeApp.isPending} onClick={async()=>{if(await confirm({title:t('app_delete'),description:t('app_delete_confirm'),actionLabel:t('app_delete'),destructive:true,confirmText:spec?.title||t('app_workspace')}))removeApp.mutate();}}><Trash2 className="size-3"/>{t('app_delete')}</Button>
       </aside>
       <div className="min-w-0 space-y-5">
-        {builder}
         {focused === null ? <section className="space-y-5" aria-label={t('app_all_sections')}>
           <div className="rounded-2xl border border-olive/20 bg-olive/5 p-6">
             <h3 className="text-xl font-semibold">{t('app_overview_title')}</h3>

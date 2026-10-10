@@ -135,19 +135,22 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
     <>
       {!embedded && !open && (
         <button type="button" onClick={() => onOpenChange(true)}
-          className="grad-olive fixed bottom-6 right-6 z-40 flex size-14 items-center justify-center rounded-full text-primary-foreground shadow-[0_10px_40px_rgba(181,211,61,0.35)] transition-transform hover:scale-105">
-          <MessageCircle className="size-6" />
+          aria-label={t(scope === "app" ? "app_builder" : "chat")} aria-expanded={open}
+          className={`grad-olive fixed bottom-6 right-6 z-40 flex h-12 items-center justify-center gap-2 rounded-full text-primary-foreground shadow-lg transition-transform hover:scale-105 ${scope === "app" ? "px-5" : "w-12"}`}>
+          <MessageCircle className="size-5" />{scope === "app" && <span className="text-sm font-semibold">{t("app_builder")}</span>}{busy && <span className="size-3 animate-spin rounded-full border-2 border-white/40 border-t-white"/>}
         </button>
       )}
       <aside
-        className={embedded ? "flex max-h-[540px] min-h-64 flex-col overflow-hidden rounded-2xl border border-olive/30 bg-card shadow-sm" : `fixed bottom-4 right-4 top-[73px] z-40 flex w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-all duration-300 ${open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-[110%] opacity-0"}`}
+        className={embedded ? "flex max-h-[540px] min-h-64 flex-col overflow-hidden rounded-2xl border border-olive/30 bg-card shadow-sm" : `fixed bottom-4 right-4 top-[73px] z-40 flex w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-[0_24px_70px_rgba(0,0,0,0.25)] transition-all duration-300 ${open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-[110%] opacity-0"}`}
+        aria-label={t(scope === "app" ? "app_builder" : "chat")}
+        inert={!embedded && !open}
         aria-hidden={!embedded && !open}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <MessageCircle className="size-4 text-olive" />
           <span className="text-sm font-bold">{t(scope === "app" ? "app_builder" : "chat")}</span>
           <span className="flex-1" />
-          {!embedded && <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}><X className="size-4" /></Button>}
+          {!embedded && <Button variant="ghost" size="icon" aria-label={t("close")} onClick={() => onOpenChange(false)}><X className="size-4" /></Button>}
         </div>
         <div className="border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2">

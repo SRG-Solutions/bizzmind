@@ -7,6 +7,7 @@ export type Lang = "bg" | "en";
 
 export const dict = {
   bg: {
+    close: "Затвори",
     app_builder: "Изгради приложението",
     app_builder_model_hint: "Проектира форми и действия за работа с данните в приложението.",
     app_builder_hint: "Опиши какво искаш да правиш с данните: да променяш количества, да планираш бюджет или да поддържаш договори. Ще създам форми и действия тук в приложението. Данните се променят, когато ти натиснеш „Запази“.",
@@ -389,6 +390,7 @@ export const dict = {
     lang_bg: "BG", lang_en: "EN",
   },
   en: {
+    close: "Close",
     app_builder: "Build your app",
     app_builder_model_hint: "Designs forms and actions for working with data in your app.",
     app_builder_hint: "Describe what you want to do with your data: adjust quantities, plan a budget or manage contracts. I will build forms and actions here in your app. Records change only when you press Save.",
