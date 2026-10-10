@@ -4,19 +4,24 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, cancelJob, endpoints, JobCancelled, p as apiPath, runJob } from "@/lib/api";
+import { api, cacheGet, cacheSet, useCachedPlaceholder, cancelJob, endpoints, JobCancelled, p as apiPath, runJob } from "@/lib/api";
 import { localeOf, useLang, useT, type Key } from "@/lib/i18n";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Blocks, Check, ChevronDown, MessageCircle, Plus, RefreshCcw, Sparkles, Trash2, Wallet } from "lucide-react";
+import { Blocks, Check, ChevronDown, MessageCircle, Plus, RefreshCcw, Sparkles, Trash2, Wallet, ArrowUpRight, ArrowDownUp, BarChart3, LayoutDashboard, List, Loader2, Search, SlidersHorizontal } from "lucide-react";
 import { useBuyCredits } from "@/components/buy-credits";
 import { useConfirm } from "@/components/confirm-dialog";
+import { ChartCard } from "@/components/chart-card";
+import { Textarea } from "@/components/ui/textarea";
+import { selectAppRows } from "@/lib/app-workspace";
+import type { Chart } from "@/lib/api";
 import { TabLoading } from "@/components/dashboard-empty";
 
 interface Field { column: string; label: string; type?: string; required?: boolean; options_sql?: string }
 interface View {
-  type: "kpi" | "entry" | "table";
+  type: "kpi" | "entry" | "table" | "chart";
+  chart_type?: "bar" | "line" | "area" | "pie"; x_field?: string; y_fields?: string[];
   title: string; hint?: string; table?: string; editable_table?: string; sql?: string;
   collapsible?: boolean; collapsed?: boolean; width?: "half" | "full";
   tables?: { table: string; label: string }[];
@@ -33,7 +38,7 @@ interface AppPlan {
 
 function useSql(pid: string, sql?: string, key?: string) {
   return useQuery({
-    queryKey: ["app-sql", pid, key ?? sql],
+    queryKey: ["app-sql", pid, key, sql],
     queryFn: () => api<{ columns: string[]; rows: Record<string, unknown>[] }>(
       apiPath(pid, "/app/query"), { method: "POST", body: JSON.stringify({ sql }) }),
     enabled: !!sql,
@@ -46,7 +51,7 @@ function KpiView({ pid, view, inFold }: { pid: string; view: View; inFold?: bool
   return (
     <Card className={inFold ? "border-0 bg-transparent p-4 shadow-none" : "p-5"}>
       {!inFold && <h3 className="mb-3 text-[12px] font-bold uppercase tracking-wider text-muted-foreground">{view.title}</h3>}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {(view.items ?? []).map((it) => <KpiItem key={it.label} pid={pid} item={it} loc={localeOf(lang)} />)}
       </div>
     </Card>
@@ -54,15 +59,16 @@ function KpiView({ pid, view, inFold }: { pid: string; view: View; inFold?: bool
 }
 
 function KpiItem({ pid, item, loc }: { pid: string; item: { label: string; sql: string; unit?: string }; loc: string }) {
+  const t = useT();
   const q = useSql(pid, item.sql);
   const row = q.data?.rows?.[0];
   const raw = row ? Object.values(row)[0] : null;
   const val = typeof raw === "number" ? raw.toLocaleString(loc, { maximumFractionDigits: 2 }) : (raw ?? "—");
   return (
-    <div className="rounded-xl border border-border bg-secondary/40 px-4 py-3">
-      <div className="text-[11.5px] text-muted-foreground">{item.label}</div>
-      <div className="mt-0.5 text-xl font-extrabold tabular-nums">
-        {q.isLoading ? "…" : String(val)}
+    <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-card to-olive/5 px-5 py-5">
+      <div className="text-xs font-medium leading-relaxed text-muted-foreground">{item.label}</div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">
+        {q.isLoading ? <span className="block h-8 w-28 animate-pulse rounded bg-secondary" /> : q.isError ? <button onClick={() => q.refetch()} className="text-xs text-destructive">{t("app_retry")}</button> : String(val)}
         {item.unit && <span className="ml-1 text-[11px] font-semibold text-muted-foreground">{item.unit}</span>}
       </div>
     </div>
@@ -110,7 +116,7 @@ function EntryView({ pid, view, inFold }: { pid: string; view: View; inFold?: bo
         <div className="flex items-end sm:col-span-2 lg:col-span-3">
           <Button type="submit" disabled={missing || save.isPending}
             className="grad-olive font-bold text-primary-foreground hover:opacity-90">
-            <Plus className="size-4" />{t("app_add_record")}
+            {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}{t(save.isPending ? "app_saving" : "app_add_record")}
           </Button>
         </div>
       </form>
@@ -123,7 +129,7 @@ function FieldInput({ pid, field, value, onChange }: { pid: string; field: Field
   const cls = "h-9 rounded-lg border border-border bg-secondary/40 px-2.5 text-[13px] outline-none focus:border-olive";
   return (
     <label className="flex flex-col gap-1 text-[11px] font-semibold text-muted-foreground">
-      {field.label}{field.required && <span className="text-olive"> *</span>}
+      <span>{field.label}{field.required && <span className="text-olive"> *</span>}</span>
       {field.type === "select" && opts.data ? (
         <select className={cls} value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">—</option>
@@ -141,54 +147,45 @@ function FieldInput({ pid, field, value, onChange }: { pid: string; field: Field
 }
 
 function TableView({ pid, view, inFold }: { pid: string; view: View; inFold?: boolean }) {
+  const t = useT();
   const { lang } = useLang();
-  const loc = localeOf(lang);
   const q = useSql(pid, view.sql);
-  return (
-    <Card className={inFold ? "overflow-hidden border-0 bg-transparent p-0 shadow-none" : "overflow-hidden p-0"}>
-      <div className={inFold ? "px-5 py-2" : "border-b border-border px-5 py-3"}>
-        {!inFold && <h3 className="text-[14px] font-bold">{view.title}</h3>}
-        {view.hint && <div className="mt-0.5 text-[12px] text-muted-foreground">{view.hint}</div>}
-      </div>
-      <div className="max-h-96 overflow-auto">
-        <table className="w-full border-collapse text-[12.5px]">
-          <thead className="sticky top-0 bg-card">
-            <tr>{q.data?.columns.map((c) => (
-              <th key={c} className="whitespace-nowrap px-4 py-2 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">
-                {c.replace(/_/g, " ")}
-              </th>))}
-            </tr>
-          </thead>
-          <tbody>
-            {q.data?.rows.map((r, i) => (
-              <tr key={i} className="border-t border-border/60 hover:bg-secondary/40">
-                {q.data!.columns.map((c) => {
-                  const v = r[c];
-                  return <td key={c} className={`px-4 py-1.5 ${typeof v === "number" ? "text-right tabular-nums" : ""}`}>
-                    {typeof v === "number" ? v.toLocaleString(loc, { maximumFractionDigits: 2 }) : String(v ?? "")}
-                  </td>;
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {q.isLoading && <div className="p-5 text-sm text-muted-foreground">…</div>}
-        {q.isError && <div className="p-5 text-sm text-destructive">{(q.error as Error).message}</div>}
-      </div>
-    </Card>
-  );
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<{ column: string; descending: boolean } | null>(null);
+  const rows = selectAppRows(q.data?.rows ?? [], search, sort, localeOf(lang));
+  return <Card className={inFold ? "overflow-hidden border-0 bg-transparent p-0 shadow-none" : "overflow-hidden p-0"}>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+      <div>{!inFold && <h3 className="font-semibold">{view.title}</h3>}{view.hint && <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">{view.hint}</p>}</div>
+      <label className="relative"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground"/><Input aria-label={t("app_search_rows")} placeholder={t("app_search_rows")} value={search} onChange={e=>setSearch(e.target.value)} className="h-9 w-64 pl-9"/></label>
+    </div>
+    <div className="max-h-[520px] overflow-auto">
+      <table className="w-full border-collapse text-[13px]"><thead className="sticky top-0 z-10 bg-card"><tr>{q.data?.columns.map(c=><th key={c} aria-sort={sort?.column===c ? sort.descending ? "descending" : "ascending" : "none"} className="border-b border-border px-4 py-3 text-left text-xs font-semibold text-muted-foreground"><button onClick={()=>setSort({column:c,descending:sort?.column===c&&!sort.descending})} className="flex items-center gap-2 whitespace-nowrap">{c.replace(/_/g," ")}<ArrowDownUp className={`size-3 ${sort?.column===c?'text-olive':'opacity-40'}`}/></button></th>)}</tr></thead>
+      <tbody>{rows.map((row,i)=><tr key={i} className="border-b border-border/50 transition-colors odd:bg-secondary/15 hover:bg-olive/5">{q.data!.columns.map(c=><td key={c} className={`max-w-[32rem] px-4 py-3 leading-relaxed ${typeof row[c]==='number'?'text-right font-medium tabular-nums':''}`}>{typeof row[c]==='number' ? row[c].toLocaleString(localeOf(lang),{maximumFractionDigits:2}) : String(row[c]??'—')}</td>)}</tr>)}</tbody></table>
+      {q.isLoading&&<div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin"/>{t('app_loading_rows')}</div>}
+      {q.isError&&<div className="p-6 text-sm"><p>{t('app_query_failed')}</p><Button variant="outline" onClick={()=>q.refetch()} className="mt-2">{t('app_retry')}</Button></div>}
+      {!q.isLoading&&!q.isError&&!rows.length&&<p className="p-8 text-center text-sm text-muted-foreground">{t('app_no_rows')}</p>}
+    </div><div className="flex flex-wrap justify-between gap-2 px-5 py-3 text-[11px] text-muted-foreground"><span>{t('app_row_count',{n:rows.length})}</span><span>{t('app_loaded_limit')}</span></div>
+  </Card>;
 }
 
-function Foldable({ view, children }: { view: View; children: React.ReactNode }) {
+function AppChartView({pid,view}:{pid:string;view:View}) {
+  const t=useT(); const q=useSql(pid,view.sql);
+  if(q.isLoading)return <TabLoading label={t('app_loading_rows')}/>;
+  if(q.isError)return <div className="p-5"><p>{t('app_query_failed')}</p><Button onClick={()=>q.refetch()}>{t('app_retry')}</Button></div>;
+  return <ChartCard chart={{id:0,title:view.title,insight:view.hint??'',chart_type:view.chart_type??'bar',x_field:view.x_field??q.data?.columns[0]??'',y_fields:view.y_fields??q.data?.columns.slice(1)??[],rows:(q.data?.rows??[]) as Chart['rows']}}/>;
+}
+
+function Foldable({ view, children, onEdit }: { view: View; children: React.ReactNode; onEdit?: () => void }) {
+  const t=useT();
   const [open, setOpen] = useState(!view.collapsed);
-  if (!view.collapsible) return <>{children}</>;
+  if (!view.collapsible) return <div className="relative">{onEdit&&<Button size="sm" variant="ghost" onClick={onEdit} className="mb-2 ml-auto flex text-muted-foreground"><SlidersHorizontal className="size-3"/>{t("app_edit_section")}</Button>}{children}</div>;
   return (
     <Card className="overflow-hidden p-0">
-      <button type="button" onClick={() => setOpen(!open)}
+      <div className="flex items-center gap-2 pr-4"><button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-3 px-5 py-3.5 text-left transition-colors hover:bg-secondary/40">
         <span className="flex-1 text-[14.5px] font-bold">{view.title}</span>
         <ChevronDown className={`size-4 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
-      </button>
+      </button>{onEdit&&<Button aria-label={t("app_edit_section")} title={t("app_edit_section")} variant="ghost" size="icon-sm" onClick={onEdit}><SlidersHorizontal className="size-4"/></Button>}</div>
       {open && <div className="border-t border-border p-1">{children}</div>}
     </Card>
   );
@@ -201,6 +198,10 @@ export function AppTab({ pid, hasTables, onAskChat }: {
   const qc = useQueryClient();
   const buyCredits = useBuyCredits();
   const confirm = useConfirm();
+  const hydrated = useCachedPlaceholder();
+  const [activeSection, setActiveSection] = useState<number | null>(null);
+  const [design, setDesign] = useState("");
+  const designInput = useRef<HTMLTextAreaElement>(null);
   const [building, setBuilding] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [step, setStep] = useState("");
@@ -211,7 +212,8 @@ export function AppTab({ pid, hasTables, onAskChat }: {
   const [extra, setExtra] = useState("");
   const app = useQuery({
     queryKey: ["app", pid],
-    queryFn: () => api<{ app: AppSpec }>(apiPath(pid, "/app")),
+    queryFn: async () => {const data=await api<{ app: AppSpec }>(apiPath(pid,"/app"));cacheSet(`app:${pid}`,data);return data;},
+    placeholderData: () => hydrated ? cacheGet<{app:AppSpec}>(`app:${pid}`) : undefined,
   });
   const removeApp = useMutation({
     mutationFn: () => endpoints.deleteApp(pid),
@@ -281,7 +283,7 @@ export function AppTab({ pid, hasTables, onAskChat }: {
   }
 
   // proposal stage: what the AI suggests, what you want, what it must know
-  if (plan && !views.length) {
+  if (plan) {
     const chosen = plan.proposals?.find((p) => p.id === picked);
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
@@ -352,6 +354,8 @@ export function AppTab({ pid, hasTables, onAskChat }: {
     );
   }
 
+  if (app.isError && !app.data) return <div className="p-8 text-center"><p>{t("app_query_failed")}</p><Button className="mt-3" onClick={()=>app.refetch()}>{t("app_retry")}</Button></div>;
+
   if (!views.length) {
     return (
       <div className="flex min-h-[55vh] flex-col items-center justify-center gap-4 text-center">
@@ -378,53 +382,24 @@ export function AppTab({ pid, hasTables, onAskChat }: {
     );
   }
 
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-extrabold">{spec?.title}</h2>
-          {spec?.subtitle && <div className="text-[13px] text-muted-foreground">{spec.subtitle}</div>}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {onAskChat && (
-            <Button variant="outline" size="sm" onClick={() => onAskChat(t("app_edit_prompt"))}>
-              <MessageCircle className="size-4" />{t("app_edit")}
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={propose}>
-            <RefreshCcw className="size-4" />{t("app_rebuild")}
-          </Button>
-          <Button variant="ghost" size="sm" disabled={removeApp.isPending}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={async () => {
-              if (await confirm({
-                title: t("app_delete"), description: t("app_delete_confirm"),
-                actionLabel: t("app_delete"), destructive: true,
-              })) removeApp.mutate();
-            }}>
-            <Trash2 className="size-4" />{t("app_delete")}
-          </Button>
-        </div>
+  const focused = activeSection !== null && views[activeSection] ? activeSection : null;
+  const ask=(prompt:string)=>{onAskChat?.(`${t("app_edit_prompt")}\n${prompt}`);};
+  const sectionIcon=(type:View["type"])=>type==='kpi'?LayoutDashboard:type==='entry'?Plus:type==='chart'?BarChart3:List;
+  return <div className="mx-auto w-full max-w-[1600px] space-y-6">
+    <section className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 md:p-8">
+      <div className="pointer-events-none absolute -right-20 -top-32 size-96 rounded-full bg-olive/10 blur-3xl"/>
+      <div className="relative flex flex-wrap items-start justify-between gap-5"><div className="max-w-3xl"><span className="mb-3 inline-flex items-center gap-2 text-xs font-semibold text-olive"><span className="size-1.5 rounded-full bg-olive"/>{t('app_live')}</span><h2 className="text-2xl font-semibold tracking-tight md:text-3xl">{spec?.title}</h2>{spec?.subtitle&&<p className="mt-3 text-sm leading-relaxed text-muted-foreground">{spec.subtitle}</p>}</div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={()=>{qc.invalidateQueries({queryKey:['app-sql',pid]});app.refetch();}}><RefreshCcw className={`size-3.5 ${app.isFetching?'animate-spin':''}`}/>{t('app_refresh_data')}</Button><Button variant="ghost" size="sm" onClick={propose}>{t('app_rebuild')}</Button></div></div>
+    </section>
+    <div className="grid items-start gap-6 lg:grid-cols-[230px_minmax(0,1fr)]">
+      <aside className="space-y-5"><div><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">{t('app_sections')}</p><nav aria-label={t('app_sections')} className="space-y-1"><button onClick={()=>setActiveSection(null)} aria-current={focused===null?'page':undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${focused===null?'bg-olive/10 font-semibold text-olive':'text-muted-foreground hover:bg-secondary'}`}><LayoutDashboard className="size-4"/>{t('app_all_sections')}<span className="ml-auto text-xs">{views.length}</span></button>{views.map((v,i)=>{const Icon=sectionIcon(v.type);return <button key={i} aria-current={focused===i?'page':undefined} onClick={()=>setActiveSection(i)} className={`flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left text-[12px] leading-relaxed ${focused===i?'bg-olive/10 font-semibold text-olive':'text-muted-foreground hover:bg-secondary'}`}><Icon className="mt-0.5 size-4 shrink-0"/><span>{v.title}</span></button>;})}</nav></div>
+      {onAskChat&&<div className="rounded-2xl border border-olive/25 bg-olive/5 p-4"><Sparkles className="mb-3 size-5 text-olive"/><h3 className="text-sm font-semibold">{t('app_design')}</h3><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{t('app_design_hint')}</p><div className="mt-4 space-y-2">{(['chart','focus','form'] as const).map(k=><button key={k} onClick={()=>{setDesign(t(`app_prompt_${k}` as Key));designInput.current?.focus();designInput.current?.scrollIntoView({behavior:"smooth",block:"center"});}} className="flex w-full items-center justify-between gap-1 rounded-lg border border-border bg-card px-3 py-2 text-left text-xs hover:border-olive/50">{t(`app_suggest_${k}` as Key)}<ArrowUpRight className="size-3 shrink-0"/></button>)}</div></div>}
+      <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={removeApp.isPending} onClick={async()=>{if(await confirm({title:t('app_delete'),description:t('app_delete_confirm'),actionLabel:t('app_delete'),destructive:true,confirmText:spec?.title||t('app_workspace')}))removeApp.mutate();}}><Trash2 className="size-3"/>{t('app_delete')}</Button>
+      </aside>
+      <div className="min-w-0 space-y-5">
+        {onAskChat&&<form onSubmit={e=>{e.preventDefault();if(design.trim())ask(design);}} className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-start gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-olive/10 text-olive"><Sparkles className="size-4"/></span><Textarea ref={designInput} aria-label={t('app_design')} placeholder={t('app_design_ph')} value={design} onChange={e=>setDesign(e.target.value)} className="min-h-16 resize-none border-0 bg-transparent p-1 shadow-none focus-visible:ring-0"/></div><div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3"><span className="text-xs text-muted-foreground">{t('app_design_hint')}</span><Button disabled={!design.trim()} type="submit" className="grad-olive text-primary-foreground"><ArrowUpRight className="size-4"/>{t('app_design_send')}</Button></div></form>}
+        <div className="grid gap-5 xl:grid-cols-2">{views.map((v,i)=>{if(focused!==null&&focused!==i)return null;return <div key={`${i}:${v.title}`} className={focused===null&&v.width==='half'?'xl:col-span-1':'xl:col-span-2'}><Foldable view={focused===i?{...v,collapsed:false}:v} key={`${i}:${focused===i}`} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:v.title})):undefined}>{v.type==='kpi'?<KpiView pid={pid} view={v} inFold={!!v.collapsible}/>:v.type==='entry'?<EntryView pid={pid} view={v} inFold={!!v.collapsible}/>:v.type==='chart'?<AppChartView pid={pid} view={v}/>:<TableView pid={pid} view={v} inFold={!!v.collapsible}/>}</Foldable></div>;})}</div>
+        {spec?.generated_at&&<p className="text-[11px] text-muted-foreground">{t('app_generated',{at:spec.generated_at})}</p>}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {views.map((v, i) => (
-          <div key={i} className={v.width === "half" ? "lg:col-span-1" : "lg:col-span-2"}>
-            <Foldable view={v}>
-              {v.type === "kpi" ? <KpiView pid={pid} view={v} inFold={!!v.collapsible} />
-                : v.type === "entry" ? <EntryView pid={pid} view={v} inFold={!!v.collapsible} />
-                  : <TableView pid={pid} view={v} inFold={!!v.collapsible} />}
-            </Foldable>
-          </div>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-olive/25 bg-olive/5 px-4 py-3 text-[12.5px]">
-        <MessageCircle className="size-4 shrink-0 text-olive" />
-        <span className="flex-1">{t("app_edit_hint")}</span>
-        {onAskChat && (
-          <Button size="sm" variant="outline" onClick={() => onAskChat(t("app_edit_prompt"))}>{t("app_edit")}</Button>
-        )}
-      </div>
-      {spec?.generated_at && <div className="text-[11px] text-muted-foreground">{t("app_generated", { at: spec.generated_at })}</div>}
     </div>
-  );
+  </div>;
 }

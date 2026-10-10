@@ -3,6 +3,8 @@ backends, and the long-running tasks built on them (review, deck, translate)."""
 
 from __future__ import annotations
 
+from bizzmind.app_spec import validate_app_spec
+
 import asyncio
 import json
 import os
@@ -206,6 +208,9 @@ TOOLS = [
             "{\"type\":\"entry\",\"title\":str,\"hint\":str,\"table\":str or \"tables\":[{\"table\":str,\"label\":str}],"
             "\"fields\":[{\"column\":str,\"label\":str,\"type\":\"text|number|date|select\",\"required\":bool,\"options_sql\":str}]} | "
             "{\"type\":\"table\",\"title\":str,\"hint\":str,\"sql\":str}. "
+            'Charts: {"type":"chart","title":str,"hint":str,"sql":str,"chart_type":"bar|line|area|pie","x_field":str,"y_fields":[str]}. '
+            "Use charts for trends and comparisons; fields must exactly match query output columns. "
+            "The app provides section navigation, searchable sortable tables and section-specific editing. "
             "SQL must be read-only SELECT over the real tables; KPI sql returns one row, one column. "
             "Titles and labels in the user's language. Use this whenever the user asks to change "
             "how their app looks or works."
@@ -460,15 +465,11 @@ def _execute_tool_inner(proj: Project, name: str, tool_input: dict) -> tuple:
                 spec = json.loads(tool_input["spec"])
             except json.JSONDecodeError as e:
                 return f"The spec is not valid JSON: {e}", True
-            views = spec.get("views")
-            if not isinstance(views, list) or not views:
-                return "The spec needs a non-empty 'views' list.", True
-            allowed = {"kpi", "entry", "table"}
-            for v in views:
-                if v.get("type") not in allowed:
-                    return f"Unknown view type {v.get('type')!r}; use kpi, entry or table.", True
-                if v.get("type") == "entry" and not (v.get("table") or v.get("tables")):
-                    return "An entry view needs 'table' or 'tables'.", True
+            try:
+                validate_app_spec(spec)
+            except ValueError as e:
+                return str(e), True
+            views = spec["views"]
             spec["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
             proj.app = spec
             proj.save_app()
@@ -1314,6 +1315,8 @@ Return ONE json object, no prose, no markdown fences:
          "type": "text|number|date|select", "required": true,
          "options_sql": "SELECT DISTINCT col FROM t ORDER BY 1"   // select only
         }]},
+    {"type": "chart", "title": "...", "hint": "...", "sql": "SELECT ...",
+     "chart_type": "line", "x_field": "month", "y_fields": ["revenue"]},
     {"type": "table", "title": "...", "sql": "SELECT ... ORDER BY ... LIMIT 50",
      "hint": "...", "editable_table": "<table>"   // omit if read-only
     }
@@ -1325,7 +1328,13 @@ Any view may also carry layout hints: "collapsible": true (fold-out panel),
 every minute) and "width": "half" | "full".
 
 Rules:
-- 3 to 6 views. Always include at least one "entry" view (the app must be
+- Design a coherent workspace around daily decisions, with a concise purpose in the subtitle.
+- The UI includes section navigation, table search/sort and a natural-language edit composer.
+- Charts support bar, line, area and pie; x_field and y_fields must match query output columns.
+  Use a chart when trends or comparisons help the decision. Never invent data or projections.
+- Put indicators first, a useful working list or chart next, then entry forms.
+  Keep entry forms collapsed initially. Use half-width only for compact views.
+- 3 to 8 views. Always include at least one "entry" view (the app must be
   usable for daily input) and one "kpi" row.
 - CRITICAL — many tables of the same shape (one sheet per site/store/month) are
   ONE entry view with the "tables" list: every table becomes a picker option
@@ -1387,6 +1396,10 @@ async def run_app(proj: Project, brief: str = ""):
     if not m:
         raise RuntimeError(T(lang, "err_app_invalid"))
     spec = json.loads(m.group(0))
+    try:
+        validate_app_spec(spec)
+    except ValueError as exc:
+        raise RuntimeError(T(lang, "err_app_invalid")) from exc
     spec["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
     proj.app = spec
     proj.save_app()
