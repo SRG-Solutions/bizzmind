@@ -7,6 +7,7 @@ export type Lang = "bg" | "en";
 
 export const dict = {
   bg: {
+    app_collapse_chat: "Свий чата",
     close: "Затвори",
     app_builder: "Изгради приложението",
     app_builder_model_hint: "Проектира форми и действия за работа с данните в приложението.",
@@ -390,6 +391,7 @@ export const dict = {
     lang_bg: "BG", lang_en: "EN",
   },
   en: {
+    app_collapse_chat: "Collapse chat",
     close: "Close",
     app_builder: "Build your app",
     app_builder_model_hint: "Designs forms and actions for working with data in your app.",

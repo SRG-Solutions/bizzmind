@@ -7,7 +7,7 @@ import { useT, type Key } from "@/lib/i18n";
 import { useBuyCredits } from "@/components/buy-credits";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ImagePlus, MessageCircle, Send, X } from "lucide-react";
+import { ChevronDown, ImagePlus, MessageCircle, Send, X } from "lucide-react";
 
 type Item = ChatMessage & { live?: JobEvent[]; started?: number; procId?: string; shots?: string[] };
 
@@ -136,8 +136,8 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
       {!embedded && !open && (
         <button type="button" onClick={() => onOpenChange(true)}
           aria-label={t(scope === "app" ? "app_builder" : "chat")} aria-expanded={open}
-          className={`grad-olive fixed bottom-6 right-6 z-40 flex h-12 items-center justify-center gap-2 rounded-full text-primary-foreground shadow-lg transition-transform hover:scale-105 ${scope === "app" ? "px-5" : "w-12"}`}>
-          <MessageCircle className="size-5" />{scope === "app" && <span className="text-sm font-semibold">{t("app_builder")}</span>}{busy && <span className="size-3 animate-spin rounded-full border-2 border-white/40 border-t-white"/>}
+          className="grad-olive fixed bottom-6 right-6 z-40 flex size-14 items-center justify-center rounded-full text-primary-foreground shadow-lg transition-transform hover:scale-105">
+          <MessageCircle className="size-6" />{busy && <span className="absolute right-1 top-1 size-3 animate-spin rounded-full border-2 border-white/40 border-t-white"/>}
         </button>
       )}
       <aside
@@ -150,7 +150,7 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
           <MessageCircle className="size-4 text-olive" />
           <span className="text-sm font-bold">{t(scope === "app" ? "app_builder" : "chat")}</span>
           <span className="flex-1" />
-          {!embedded && <Button variant="ghost" size="icon" aria-label={t("close")} onClick={() => onOpenChange(false)}><X className="size-4" /></Button>}
+          {!embedded && <Button variant="ghost" size="icon" aria-label={t(scope === "app" ? "app_collapse_chat" : "close")} onClick={() => onOpenChange(false)}>{scope === "app" ? <ChevronDown className="size-4" /> : <X className="size-4" />}</Button>}
         </div>
         <div className="border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2">
