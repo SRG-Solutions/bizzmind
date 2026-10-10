@@ -9,6 +9,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from typing import Literal
 
 import db
 import jobs
@@ -28,7 +29,7 @@ from bizzmind.data import (invalidate, apply_filters_to_sql, describe_schema, fi
 from bizzmind.brand import brand_colors, brand_dir, brand_files, brand_logo_path, brand_theme
 from bizzmind.localization import (_h, _has_letters, _load_i18n, content_lang, localize_charts,
                                    localized_content, translatable_items)
-from bizzmind.agent import (CancelledByUser, dispatch_agent, run_app, run_app_proposal,
+from bizzmind.agent import (CancelledByUser, dispatch_agent, set_chat_scope, run_app, run_app_proposal,
                             run_deck, run_review, run_translate)
 
 router = APIRouter()
@@ -78,6 +79,7 @@ async def _execute_claimed(job: dict) -> dict:
         proj.ai_model_id = None
     try:
         if kind == "chat":
+            set_chat_scope(proj, pl.get("scope", "dashboard"))
             proj.add_chat("user", pl["message"])
             result = await dispatch_agent(proj, pl["message"], pl.get("images") or [])
         elif kind == "review":
@@ -251,6 +253,7 @@ async def delete_project(pid: str):
 
 class ChatRequest(BaseModel):
     message: str
+    scope: Literal["dashboard", "app"] = "dashboard"
     model: str = "standard"
     images: list[str] = []          # data URLs of screenshots the user pasted
 
@@ -621,11 +624,12 @@ async def chat(pid: str, req: ChatRequest, request: Request):
     proj.ai_model_id = plans.MODELS[plans.norm_model(req.model)]["model_id"]
     if INLINE_JOBS:
         proj.lang = lang
+        set_chat_scope(proj, req.scope)
         proj.add_chat("user", req.message)
         return await dispatch_agent(proj, req.message, req.images[:3])
     u = sb_auth.current_user()
     return {"job_id": jobs.enqueue(pid, "chat", {"message": req.message, "model": req.model,
-                                                "estimate": est, "images": req.images[:3]},
+                                                "estimate": est, "images": req.images[:3], "scope": req.scope},
                                    lang, u.id if u else None)}
 
 
@@ -742,6 +746,58 @@ def app_insert_row(pid: str, req: AppRow):
     db.execute(pid, f'INSERT INTO "{req.table}" ({ident}) VALUES ({ph})', tuple(vals.values()))
     invalidate(pid)
     log.info(f"[{pid}] app: row inserted into {req.table} ({len(vals)} field(s))")
+    return {"ok": True}
+
+
+class AppRecordChange(BaseModel):
+    view: int
+    table: str
+    rowid: str
+    version: str
+    values: dict
+
+
+@router.get("/api/p/{pid}/app/records")
+def app_records(pid: str, request: Request, view: int, table: str, q: str = "", offset: int = 0):
+    from bizzmind.app_records import editable_form
+    from psycopg import sql
+    proj = get_project(pid)
+    lang = req_lang(request)
+    try:
+        form = editable_form(proj, view, table)
+        fields = [f["column"] for f in form["fields"]]
+        columns = sql.SQL(', ').join(map(sql.Identifier, fields))
+        search = sql.SQL(' OR ').join(sql.SQL('CAST({} AS text) ILIKE %s').format(sql.Identifier(c)) for c in fields)
+        query = sql.SQL('SELECT ctid::text AS __rid, xmin::text AS __version, {} FROM {}.{} WHERE {} ORDER BY ctid LIMIT 26 OFFSET %s').format(
+            columns, sql.Identifier(db.schema_for(pid)), sql.Identifier(table), search)
+        with db.connect(pid, readonly=True) as con:
+            rows = con.execute(query, [f'%{q.strip()}%'] * len(fields) + [max(0, offset)]).fetchall()
+        return {"rows": [dict(zip(['__rid', '__version', *fields], [None if x is None else str(x) for x in row])) for row in rows[:25]], "more": len(rows) > 25}
+    except Exception:
+        raise HTTPException(400, T(lang, "app_form_invalid"))
+
+
+@router.patch("/api/p/{pid}/app/record")
+def app_update_record(pid: str, req: AppRecordChange, request: Request):
+    from bizzmind.app_records import editable_form, update_record, RecordConflict
+    proj = get_project(pid)
+    lang = req_lang(request)
+    try:
+        form = editable_form(proj, req.view, req.table)
+        fields = {f['column']: f for f in form['fields']}
+        if not req.values or set(req.values) - fields.keys():
+            raise ValueError('Invalid fields')
+        if not re.fullmatch(r'\(\d+,\d+\)', req.rowid) or not req.version.isdigit():
+            raise ValueError('Invalid record')
+        values = {k: None if v == '' else v for k, v in req.values.items()}
+        if any(fields[k].get('required') and v is None for k, v in values.items()):
+            raise ValueError('Required field')
+        update_record(pid, req.table, req.rowid, req.version, values)
+    except RecordConflict:
+        raise HTTPException(409, T(lang, "app_record_conflict"))
+    except Exception:
+        raise HTTPException(400, T(lang, "app_record_invalid"))
+    invalidate(pid)
     return {"ok": True}
 
 

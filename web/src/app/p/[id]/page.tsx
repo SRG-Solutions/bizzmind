@@ -203,7 +203,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             )
           ) : tab === "app" ? (
             <AppTab pid={pid} hasTables={state.data.tables.length > 0}
-              onAskChat={(p) => { setChatSeed(p); setChatOpen(true); }} />
+              onAskChat={(p) => { setChatSeed(p); }}
+              builder={<ChatPanel key="app-builder" pid={pid} initial={state.data.chat} open={true} onOpenChange={()=>{}} embedded scope="app" seed={chatSeed} onSeedUsed={()=>setChatSeed(null)} />} />
           ) : tab === "files" ? (
             <FilesTab pid={pid} state={state.data as ProjectState} uploadRef={uploadRef}
               onUploaded={(tables) => { setPendingReview({ tables }); }} />
@@ -212,7 +213,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           )}
         </main>
       </div>
-      {state.data && (
+      {state.data && tab !== "app" && (
         <ChatPanel pid={pid} initial={state.data.chat} open={chatOpen} onOpenChange={setChatOpen} pending={pendingReview}
           seed={chatSeed} onSeedUsed={() => setChatSeed(null)} />
       )}

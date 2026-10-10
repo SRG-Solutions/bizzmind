@@ -76,6 +76,7 @@ export interface TableInfo {
 }
 
 export interface ChatMessage {
+  scope?: "dashboard" | "app";
   role: "user" | "ai" | "event" | "process";
   text: string; ts?: string;
   questions?: Question[];
@@ -176,8 +177,8 @@ export const endpoints = {
   rows: (pid: string, table: string, q: URLSearchParams) =>
     api<TableRows>(p(pid, `/table/${encodeURIComponent(table)}/rows?${q.toString()}`)),
   job: <T,>(id: string, since = 0) => api<JobStatus<T>>(`/api/jobs/${id}?since=${since}`),
-  chat: (pid: string, message: string, model = "standard", images: string[] = []) =>
-    post<{ job_id: string } | AgentResult>(p(pid, "/chat"), { message, model, images }),
+  chat: (pid: string, message: string, model = "standard", images: string[] = [], scope: "dashboard" | "app" = "dashboard") =>
+    post<{ job_id: string } | AgentResult>(p(pid, "/chat"), { message, model, images, scope }),
   review: (pid: string, tables: string[], context: string, goal: string, model = "standard") =>
     post<{ job_id: string } | AgentResult>(p(pid, "/review"), { tables, context, goal, model }),
   translate: (pid: string) => post<{ job_id?: string; translated?: number }>(p(pid, "/translate")),

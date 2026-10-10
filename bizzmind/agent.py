@@ -80,11 +80,35 @@ class _LazyClient:
 client = _LazyClient()
 
 
+APP_CHAT_TOOLS = {"run_sql_query", "update_app", "present_questions"}
+APP_CHAT_RULES = """You are the builder inside the App tab. Work ONLY on the app, never the dashboard.
+The user describes operations they want to perform on spreadsheet data. Build usable entry/edit
+forms and working lists via update_app, not dashboard charts or a narrative analysis.
+For editing existing records use an entry view with mode="edit", table (or tables), and fields.
+The UI lets the user find and select a record, review its values and explicitly save changes.
+For adding records use mode="insert" (default). Each field must reference a real source column.
+Only expose fields needed for the requested operation; preserve historical fields unless requested.
+Do not claim that adding a form has changed any records. Do not write data through agent tools.
+For a broad new workflow first ask 2-3 focused questions with present_questions and propose a
+small concrete workflow; build after their choice. Apply clear small changes directly.
+Use the current_app spec below as the starting point, preserve unrelated sections, and return
+all user-facing labels, hints and generated query aliases in the request language.
+Charts, if explicitly requested, belong inside the app spec. Dashboard tools are unavailable.
+"""
+
+
+def set_chat_scope(proj: Project, scope: str) -> None:
+    if getattr(proj, "chat_scope", "dashboard") != scope:
+        proj.messages = []
+        proj.sub_lang = None  # reconnect: the old session may contain another workspace's goals
+    proj.chat_scope = scope
+
+
 def conversation_recap(proj: Project, limit: int = 14) -> str:
     if not proj.chat:
         return ""
     who = {"user": "User", "ai": "You (assistant)", "event": "Event"}
-    lines = [f"{who.get(m['role'], m['role'])}: {_short(m['text'], 400)}" for m in proj.chat[-limit:]]
+    lines = [f"{who.get(m['role'], m['role'])}: {_short(m['text'], 400)}" for m in [m for m in proj.chat if m.get("scope", "dashboard") == getattr(proj, "chat_scope", "dashboard")][-limit:]]
     return ("<conversation_recap>\nThe app restarted. This is the recent conversation — "
             "continue from here; do NOT restart the interview or re-ask answered questions:\n"
             + "\n".join(lines) + "\n</conversation_recap>\n\n")
@@ -211,6 +235,7 @@ TOOLS = [
             'Charts: {"type":"chart","title":str,"hint":str,"sql":str,"chart_type":"bar|line|area|pie","x_field":str,"y_fields":[str]}. '
             "Use charts for trends and comparisons; fields must exactly match query output columns. "
             "The app provides section navigation, searchable sortable tables and section-specific editing. "
+            'Entry views accept "mode":"edit" to select and update existing records, or "mode":"insert" for new records. Only include writable fields needed for the task; never invent columns. '
             "SQL must be read-only SELECT over the real tables; KPI sql returns one row, one column. "
             "Titles and labels in the user's language. Use this whenever the user asks to change "
             "how their app looks or works."
@@ -396,6 +421,8 @@ def execute_tool(proj: Project, name: str, tool_input: dict) -> tuple:
 
 def _execute_tool_inner(proj: Project, name: str, tool_input: dict) -> tuple:
     try:
+        if getattr(proj, "chat_scope", "dashboard") == "app" and name not in APP_CHAT_TOOLS:
+            return json.dumps({"error": "This conversation can only build the app. Use update_app or ask a workflow question."}), True
         if name == "record_data_context":
             proj.notes.append(tool_input["note"])
             proj.save_notes()
@@ -719,6 +746,8 @@ def prompt_rules(lang: str) -> str:
 def build_system_prompt(proj: Project) -> str:
     schema = json.dumps(describe_schema(proj), default=str)
     notes = "\n".join(f"- {n}" for n in proj.notes) or "(nothing recorded yet)"
+    if getattr(proj, "chat_scope", "dashboard") == "app":
+        return APP_CHAT_RULES + "\nSchema: " + schema + "\nKnown facts: " + notes + "\n" + prompt_rules(proj.lang)
     return f"""{PROMPT_INTRO}
 
 Current database schema (tables, column types, sample rows):
@@ -843,9 +872,9 @@ pass unused fields as '' / []. present_questions takes
 
 {prompt_rules(proj.lang)}"""
     return ClaudeAgentOptions(
-        system_prompt=rules,
+        system_prompt=(APP_CHAT_RULES + "\n" + prompt_rules(proj.lang)) if getattr(proj, "chat_scope", "dashboard") == "app" else rules,
         mcp_servers={"analytics": ANALYTICS_SERVER},
-        allowed_tools=[
+        allowed_tools=(["mcp__analytics__" + name for name in sorted(APP_CHAT_TOOLS)] if getattr(proj, "chat_scope", "dashboard") == "app" else [
             "mcp__analytics__run_sql_query",
             "mcp__analytics__record_data_context",
             "mcp__analytics__define_filter",
@@ -858,7 +887,7 @@ pass unused fields as '' / []. present_questions takes
             "mcp__analytics__verify_dashboard",
             "mcp__analytics__present_questions",
             "Read",
-        ],
+        ]),
         disallowed_tools=[
             "Bash", "Write", "Edit", "Glob", "Grep", "WebSearch",
             "WebFetch", "NotebookEdit", "Task", "TodoWrite",
@@ -1022,7 +1051,7 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
                     "text": build_system_prompt(proj),
                     "cache_control": {"type": "ephemeral"},
                 }],
-                tools=TOOLS,
+                tools=[t for t in TOOLS if getattr(proj, "chat_scope", "dashboard") != "app" or t["name"] in APP_CHAT_TOOLS],
                 messages=proj.messages,
             )
         except anthropic.APIStatusError as e:
@@ -1088,6 +1117,8 @@ def _save_shots(proj: Project, images: list | None) -> list:
 
 
 async def dispatch_agent(proj: Project, user_content: str, images: list | None = None):
+    if getattr(proj, "chat_scope", "dashboard") == "app":
+        user_content = APP_CHAT_RULES + "\n<current_app>" + json.dumps(proj.app, ensure_ascii=False) + "</current_app>\nUser request: " + user_content
     t0 = time.monotonic()
     log.info(f"[{proj.id}] agent[{AI_BACKEND}]: turn start — {_short(user_content, 120)}")
     proj.log_activity("info", T(proj.lang, "act_thinking"))
@@ -1345,6 +1376,7 @@ Rules:
   and columns from the schema, quoted with double quotes when non-ASCII.
 - KPI sql returns exactly one row, one column.
 - "entry" fields: only columns a human would actually type; skip computed ones.
+- For changing existing records use entry views with mode="edit"; the user searches, selects, reviews and saves one record. Default mode="insert" adds new records. Never describe an insert form as an update form.
 - Labels and titles in __LANGUAGE__, business language, no technical jargon.
 - Think about what this business needs daily — not what is easy to query.
 

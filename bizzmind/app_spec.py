@@ -8,6 +8,12 @@ def validate_app_spec(spec: object) -> None:
         kind = view['type']
         if kind == 'entry' and not (view.get('table') or view.get('tables')):
             raise ValueError("An entry view needs 'table' or 'tables'.")
+        if kind == 'entry' and view.get('mode', 'insert') not in {'insert', 'edit'}:
+            raise ValueError('Entry mode must be insert or edit.')
+        if kind == 'entry' and view.get('mode') == 'edit':
+            fields = view.get('fields')
+            if not isinstance(fields, list) or not fields or any(not isinstance(f, dict) or not isinstance(f.get('column'), str) or not f['column'].strip() for f in fields):
+                raise ValueError('An edit form needs real writable fields.')
         if kind == 'chart':
             if view.get('chart_type') not in {'bar', 'line', 'area', 'pie'}:
                 raise ValueError('A chart needs chart_type: bar, line, area or pie.')

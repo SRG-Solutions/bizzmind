@@ -1,7 +1,7 @@
 "use client";
 /* The project's mini-app: an AI-designed working surface over the same data —
    entry forms, live KPIs and lists that replace the spreadsheet routine. */
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, cacheGet, cacheSet, useCachedPlaceholder, cancelJob, endpoints, JobCancelled, p as apiPath, runJob } from "@/lib/api";
@@ -13,7 +13,6 @@ import { Blocks, Check, ChevronDown, MessageCircle, Plus, RefreshCcw, Sparkles, 
 import { useBuyCredits } from "@/components/buy-credits";
 import { useConfirm } from "@/components/confirm-dialog";
 import { ChartCard } from "@/components/chart-card";
-import { Textarea } from "@/components/ui/textarea";
 import { selectAppRows } from "@/lib/app-workspace";
 import type { Chart } from "@/lib/api";
 import { TabLoading } from "@/components/dashboard-empty";
@@ -21,6 +20,7 @@ import { TabLoading } from "@/components/dashboard-empty";
 interface Field { column: string; label: string; type?: string; required?: boolean; options_sql?: string }
 interface View {
   type: "kpi" | "entry" | "table" | "chart";
+  mode?: "insert" | "edit";
   chart_type?: "bar" | "line" | "area" | "pie"; x_field?: string; y_fields?: string[];
   title: string; hint?: string; table?: string; editable_table?: string; sql?: string;
   collapsible?: boolean; collapsed?: boolean; width?: "half" | "full";
@@ -124,6 +124,30 @@ function EntryView({ pid, view, inFold }: { pid: string; view: View; inFold?: bo
   );
 }
 
+function EditView({pid,view,index}:{pid:string;view:View;index:number}) {
+  const t=useT(); const qc=useQueryClient();
+  const options=view.tables??[{table:view.table!,label:view.title}];
+  const [target,setTarget]=useState(options[0]?.table??"");
+  const [search,setSearch]=useState(""); const [offset,setOffset]=useState(0);
+  const [selected,setSelected]=useState<Record<string,string|null>|null>(null);
+  const [values,setValues]=useState<Record<string,string>>({});
+  const records=useQuery({queryKey:['app-records',pid,index,target,search,offset],queryFn:()=>api<{rows:Record<string,string|null>[];more:boolean}>(apiPath(pid,`/app/records?view=${index}&table=${encodeURIComponent(target)}&q=${encodeURIComponent(search)}&offset=${offset}`))});
+  const changes=Object.fromEntries(Object.entries(values).filter(([k,v])=>v!==(selected?.[k]??"")));
+  const save=useMutation({mutationFn:()=>api(apiPath(pid,'/app/record'),{method:'PATCH',body:JSON.stringify({view:index,table:target,rowid:selected?.__rid,version:selected?.__version,values:changes})}),onSuccess:()=>{toast.success(t('app_record_updated'));setSelected(null);qc.invalidateQueries({queryKey:['app-records',pid]});qc.invalidateQueries({queryKey:['app-sql',pid]});qc.invalidateQueries({queryKey:['state',pid]});},onError:(e:Error)=>{toast.error(e.message);records.refetch();}});
+  const missing=(view.fields??[]).some(f=>f.required&&!values[f.column]?.trim());
+  return <div className="space-y-4 p-5">
+    {view.hint&&<p className="text-sm text-muted-foreground">{view.hint}</p>}
+    {options.length>1&&<select aria-label={t('app_site')} value={target} disabled={save.isPending} onChange={e=>{setTarget(e.target.value);setSelected(null);setOffset(0);}} className="rounded-lg border p-2">{options.map(o=><option key={o.table} value={o.table}>{o.label}</option>)}</select>}
+    {!selected?<><h3 className="font-semibold">{t('app_record_pick')}</h3><Input aria-label={t('app_record_search')} placeholder={t('app_record_search')} value={search} onChange={e=>{setSearch(e.target.value);setOffset(0);}}/>
+      {records.isFetching&&<div className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin"/>{t('app_loading_rows')}</div>}
+      {records.isError&&<Button onClick={()=>records.refetch()}>{t('app_retry')}</Button>}
+      <div className="grid gap-2 md:grid-cols-2">{records.data?.rows.map(r=><button key={r.__rid} onClick={()=>{setSelected(r);setValues(Object.fromEntries((view.fields??[]).map(f=>[f.column,r[f.column]??''])));}} className="rounded-xl border border-border bg-card p-4 text-left text-sm hover:border-olive">{(view.fields??[]).slice(0,3).map(f=><div key={f.column}><span className="text-xs text-muted-foreground">{f.label}: </span>{r[f.column]||'—'}</div>)}</button>)}</div>
+      {!records.isFetching&&!records.isError&&!records.data?.rows.length&&<p>{t('app_no_rows')}</p>}
+      <div className="flex gap-2"><Button variant="outline" disabled={offset===0||records.isFetching} onClick={()=>setOffset(Math.max(0,offset-25))}>{t('app_records_previous')}</Button><Button variant="outline" disabled={!records.data?.more||records.isFetching} onClick={()=>setOffset(offset+25)}>{t('app_records_next')}</Button></div>
+    </>:<form onSubmit={e=>{e.preventDefault();save.mutate();}} className="space-y-4"><p className="text-sm text-olive">{t('app_record_selected')}</p><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{(view.fields??[]).map(f=><FieldInput key={f.column} pid={pid} field={f} value={values[f.column]??''} onChange={v=>setValues(old=>({...old,[f.column]:v}))}/>)}</div><div className="flex gap-2"><Button type="submit" disabled={missing||save.isPending||!Object.keys(changes).length}>{save.isPending&&<Loader2 className="size-4 animate-spin"/>}{t(save.isPending?'app_saving':'app_record_save')}</Button><Button type="button" variant="outline" disabled={save.isPending} onClick={()=>setSelected(null)}>{t('app_record_back')}</Button></div></form>}
+  </div>;
+}
+
 function FieldInput({ pid, field, value, onChange }: { pid: string; field: Field; value: string; onChange: (v: string) => void }) {
   const opts = useSql(pid, field.type === "select" ? field.options_sql : undefined, `opt:${field.column}`);
   const cls = "h-9 rounded-lg border border-border bg-secondary/40 px-2.5 text-[13px] outline-none focus:border-olive";
@@ -191,7 +215,8 @@ function Foldable({ view, children, onEdit }: { view: View; children: React.Reac
   );
 }
 
-export function AppTab({ pid, hasTables, onAskChat }: {
+export function AppTab({ pid, hasTables, onAskChat, builder }: {
+  builder?: ReactNode;
   pid: string; hasTables: boolean; onAskChat?: (prompt: string) => void;
 }) {
   const t = useT();
@@ -200,8 +225,8 @@ export function AppTab({ pid, hasTables, onAskChat }: {
   const confirm = useConfirm();
   const hydrated = useCachedPlaceholder();
   const [activeSection, setActiveSection] = useState<number | null>(null);
-  const [design, setDesign] = useState("");
-  const designInput = useRef<HTMLTextAreaElement>(null);
+
+
   const [building, setBuilding] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [step, setStep] = useState("");
@@ -392,11 +417,11 @@ export function AppTab({ pid, hasTables, onAskChat }: {
     </section>
     <div className="grid items-start gap-6 lg:grid-cols-[230px_minmax(0,1fr)]">
       <aside className="space-y-5"><div><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">{t('app_sections')}</p><nav aria-label={t('app_sections')} className="space-y-1"><button onClick={()=>setActiveSection(null)} aria-current={focused===null?'page':undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${focused===null?'bg-olive/10 font-semibold text-olive':'text-muted-foreground hover:bg-secondary'}`}><LayoutDashboard className="size-4"/>{t('app_all_sections')}<span className="ml-auto text-xs">{views.length}</span></button>{views.map((v,i)=>{const Icon=sectionIcon(v.type);return <button key={i} aria-current={focused===i?'page':undefined} onClick={()=>setActiveSection(i)} className={`flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left text-[12px] leading-relaxed ${focused===i?'bg-olive/10 font-semibold text-olive':'text-muted-foreground hover:bg-secondary'}`}><Icon className="mt-0.5 size-4 shrink-0"/><span>{v.title}</span></button>;})}</nav></div>
-      {onAskChat&&<div className="rounded-2xl border border-olive/25 bg-olive/5 p-4"><Sparkles className="mb-3 size-5 text-olive"/><h3 className="text-sm font-semibold">{t('app_design')}</h3><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{t('app_design_hint')}</p><div className="mt-4 space-y-2">{(['chart','focus','form'] as const).map(k=><button key={k} onClick={()=>{setDesign(t(`app_prompt_${k}` as Key));designInput.current?.focus();designInput.current?.scrollIntoView({behavior:"smooth",block:"center"});}} className="flex w-full items-center justify-between gap-1 rounded-lg border border-border bg-card px-3 py-2 text-left text-xs hover:border-olive/50">{t(`app_suggest_${k}` as Key)}<ArrowUpRight className="size-3 shrink-0"/></button>)}</div></div>}
+
       <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={removeApp.isPending} onClick={async()=>{if(await confirm({title:t('app_delete'),description:t('app_delete_confirm'),actionLabel:t('app_delete'),destructive:true,confirmText:spec?.title||t('app_workspace')}))removeApp.mutate();}}><Trash2 className="size-3"/>{t('app_delete')}</Button>
       </aside>
       <div className="min-w-0 space-y-5">
-        {onAskChat&&<form onSubmit={e=>{e.preventDefault();if(design.trim())ask(design);}} className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-start gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-olive/10 text-olive"><Sparkles className="size-4"/></span><Textarea ref={designInput} aria-label={t('app_design')} placeholder={t('app_design_ph')} value={design} onChange={e=>setDesign(e.target.value)} className="min-h-16 resize-none border-0 bg-transparent p-1 shadow-none focus-visible:ring-0"/></div><div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3"><span className="text-xs text-muted-foreground">{t('app_design_hint')}</span><Button disabled={!design.trim()} type="submit" className="grad-olive text-primary-foreground"><ArrowUpRight className="size-4"/>{t('app_design_send')}</Button></div></form>}
+        {builder}
         {focused === null ? <section className="space-y-5" aria-label={t('app_all_sections')}>
           <div className="rounded-2xl border border-olive/20 bg-olive/5 p-6">
             <h3 className="text-xl font-semibold">{t('app_overview_title')}</h3>
@@ -408,7 +433,7 @@ export function AppTab({ pid, hasTables, onAskChat }: {
             <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">{v.hint || t(`app_overview_${v.type}` as Key)}</p>
             <span className="mt-auto flex items-center gap-2 pt-5 text-xs font-semibold text-olive">{t('app_open_section')}<ArrowUpRight className="size-3.5"/></span>
           </button>;})}</div>
-        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
+        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'&&views[focused].mode==='edit'?<EditView pid={pid} view={views[focused]} index={focused}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
 
         {spec?.generated_at&&<p className="text-[11px] text-muted-foreground">{t('app_generated',{at:spec.generated_at})}</p>}
       </div>

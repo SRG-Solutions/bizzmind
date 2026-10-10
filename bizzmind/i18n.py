@@ -11,6 +11,9 @@ LANGS = ("bg", "en")
 LANG_NAMES = {"bg": "Bulgarian", "en": "English"}
 MSG: dict = {
     "bg": {
+        "app_form_invalid": "Формата не се зареди. Обнови приложението и опитай отново.",
+        "app_record_invalid": "Промяната не е запазена. Провери стойностите и задължителните полета.",
+        "app_record_conflict": "Записът е променен след отварянето му. Избери го отново и повтори промяната.",
         "password_short": "Паролата трябва да е поне 8 символа.",
         "email_taken": "Вече има акаунт с този имейл.",
         "confirm_email": "Изпратихме линк за потвърждение на имейла ти. Потвърди го и влез.",
@@ -103,6 +106,10 @@ MSG: dict = {
         "lang_bg": "Български", "lang_en": "English",
     },
     "en": {
+        "act_app_updated": "🧩 Updated the app: {what}",
+        "app_form_invalid": "This form could not be loaded. Refresh the app and try again.",
+        "app_record_invalid": "Changes were not saved. Check the values and required fields.",
+        "app_record_conflict": "This record changed after you opened it. Select it again and reapply your changes.",
         "password_short": "The password must be at least 8 characters.",
         "email_taken": "An account with this email already exists.",
         "confirm_email": "We sent a confirmation link to your email. Confirm it, then sign in.",

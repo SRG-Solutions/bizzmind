@@ -54,6 +54,8 @@ async def run_job(job: dict) -> dict:
         proj.ai_model_id = None
     try:
         if kind == "chat":
+            from bizzmind.agent import set_chat_scope
+            set_chat_scope(proj, p.get("scope", "dashboard"))
             proj.add_chat("user", p["message"])
             return await core.dispatch_agent(proj, p["message"], p.get("images") or [])
         if kind == "review":

@@ -114,7 +114,7 @@ class Project:
     def add_chat(self, role: str, text: str, questions: list | None = None):
         if not text and not questions:
             return
-        entry = {"role": role, "text": text, "ts": time.strftime("%Y-%m-%d %H:%M")}
+        entry = {"role": role, "text": text, "ts": time.strftime("%Y-%m-%d %H:%M"), "scope": getattr(self, "chat_scope", "dashboard")}
         if questions:
             entry["questions"] = questions
         self.chat.append(entry)

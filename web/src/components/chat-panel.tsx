@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { cancelJob, endpoints, getModelPref, JobCancelled, runJob, setModelPref, type AgentResult, type ChatMessage, type JobEvent, type Question } from "@/lib/api";
+import { cacheGet, cacheSet, cancelJob, endpoints, getModelPref, JobCancelled, runJob, setModelPref, type AgentResult, type ChatMessage, type JobEvent, type Question } from "@/lib/api";
 import { useT, type Key } from "@/lib/i18n";
 import { useBuyCredits } from "@/components/buy-credits";
 import { Button } from "@/components/ui/button";
@@ -11,17 +11,19 @@ import { ImagePlus, MessageCircle, Send, X } from "lucide-react";
 
 type Item = ChatMessage & { live?: JobEvent[]; started?: number; procId?: string; shots?: string[] };
 
-export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onSeedUsed }: {
+export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onSeedUsed, embedded = false, scope = "dashboard" }: {
+  embedded?: boolean; scope?: "dashboard" | "app";
   pid: string; initial: ChatMessage[]; open: boolean; onOpenChange: (o: boolean) => void;
   pending?: { tables: string[] } | null;
   seed?: string | null; onSeedUsed?: () => void;
 }) {
   const t = useT();
   const qc = useQueryClient();
-  const [items, setItems] = useState<Item[]>(initial);
+  const [items, setItems] = useState<Item[]>(initial.filter(m=>(m.scope??"dashboard")===scope));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const runningJob = useRef<string | null>(null);
+  const resumeChecked = useRef(false);
   const [shots, setShots] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const buyCredits = useBuyCredits();
@@ -37,11 +39,12 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
   const costly = canAfford && quote.data?.expensive === true;
   function pickModel(m: string) { setModel(m); setModelPref(pid, m); }
   const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [tick, setTick] = useState(0);
 
-  useEffect(() => { setItems(initial); }, [initial]);
+  useEffect(() => { if (!busy) setItems(initial.filter(m=>(m.scope??"dashboard")===scope)); }, [initial, scope, busy]);
   useEffect(() => {                     // "change my app" from the App tab lands in the input
-    if (seed) { setText(seed); onSeedUsed?.(); }
+    if (seed) { setText(seed); inputRef.current?.focus(); inputRef.current?.scrollIntoView({behavior:"smooth",block:"center"}); onSeedUsed?.(); }
   }, [seed]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { logRef.current?.scrollTo({ top: 1e9 }); }, [items, tick]);
   useEffect(() => { if (!busy) return; const id = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(id); }, [busy]);
@@ -53,7 +56,7 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
     try {
       const res = await runJob<AgentResult>(start, (ev) => {
         setItems((it) => it.map((m) => (m.procId === procId ? { ...m, live: [...(m.live ?? []), ev].slice(-8) } : m)));
-      }, undefined, (id) => { runningJob.current = id; });
+      }, undefined, (id) => { runningJob.current = id; cacheSet(`chat-job:${pid}:${scope}`,id); });
       setItems((it) => [...it.filter((m) => m.procId !== procId), { role: "ai", text: res.reply || t("done"), questions: res.questions }]);
       qc.invalidateQueries({ queryKey: ["state", pid] });
       qc.invalidateQueries({ queryKey: ["app", pid] });     // the agent may have edited the app
@@ -70,8 +73,18 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
       setItems((it) => [...it.filter((m) => m.procId !== procId),
         { role: "event", text: stopped ? t("job_stopped") : t("problem", { msg: (e as Error).message }) }]);
       if (stopped) { qc.invalidateQueries({ queryKey: ["state", pid] }); qc.invalidateQueries({ queryKey: ["app", pid] }); }
-    } finally { setBusy(false); runningJob.current = null; }
+    } finally { setBusy(false); runningJob.current = null; cacheSet(`chat-job:${pid}:${scope}`,null); }
   }
+
+  useEffect(() => {
+    if (resumeChecked.current) return;
+    resumeChecked.current = true;
+    const id=cacheGet<string>(`chat-job:${pid}:${scope}`);
+    if (id) endpoints.job(id).then(j=>{
+      if (j.status === 'queued' || j.status === 'running') run(t('thinking'),Promise.resolve({job_id:id}));
+      else {cacheSet(`chat-job:${pid}:${scope}`,null);qc.invalidateQueries({queryKey:['state',pid]});qc.invalidateQueries({queryKey:['app',pid]});}
+    }).catch(()=>cacheSet(`chat-job:${pid}:${scope}`,null));
+  }, [pid,scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a fresh upload opens the brief form (the user frames the analysis first)
   const lastPending = useRef<string>("");
@@ -103,12 +116,12 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
 
   function send(msg: string) {
     const text = msg.trim();
-    if ((!text && !shots.length) || busy) return;
+    if ((!text && !shots.length) || busy || !canAfford) return;
     setItems((it) => [...it, { role: "user", text: text || t("shot_only"), shots }]);
     setText("");
     const attached = shots;
     setShots([]);
-    run(t("thinking"), endpoints.chat(pid, text || t("shot_only"), model, attached));
+    run(t("thinking"), endpoints.chat(pid, text || t("shot_only"), model, attached, scope));
   }
 
   function startReview(tables: string[], context: string, aim: string) {
@@ -120,21 +133,21 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
   
   return (
     <>
-      {!open && (
+      {!embedded && !open && (
         <button type="button" onClick={() => onOpenChange(true)}
           className="grad-olive fixed bottom-6 right-6 z-40 flex size-14 items-center justify-center rounded-full text-primary-foreground shadow-[0_10px_40px_rgba(181,211,61,0.35)] transition-transform hover:scale-105">
           <MessageCircle className="size-6" />
         </button>
       )}
       <aside
-        className={`fixed bottom-4 right-4 top-[73px] z-40 flex w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-all duration-300 ${open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-[110%] opacity-0"}`}
-        aria-hidden={!open}
+        className={embedded ? "flex max-h-[540px] min-h-64 flex-col overflow-hidden rounded-2xl border border-olive/30 bg-card shadow-sm" : `fixed bottom-4 right-4 top-[73px] z-40 flex w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-all duration-300 ${open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-[110%] opacity-0"}`}
+        aria-hidden={!embedded && !open}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <MessageCircle className="size-4 text-olive" />
-          <span className="text-sm font-bold">{t("chat")}</span>
+          <span className="text-sm font-bold">{t(scope === "app" ? "app_builder" : "chat")}</span>
           <span className="flex-1" />
-          <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}><X className="size-4" /></Button>
+          {!embedded && <Button variant="ghost" size="icon" onClick={() => onOpenChange(false)}><X className="size-4" /></Button>}
         </div>
         <div className="border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2">
@@ -151,10 +164,11 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
             </div>
           </div>
           <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
-            {t((model === "max" ? "model_max_desc" : "model_standard_desc") as Key)}
+            {t(scope === "app" ? "app_builder_model_hint" : (model === "max" ? "model_max_desc" : "model_standard_desc") as Key)}
           </div>
         </div>
         <div ref={logRef} className="flex-1 space-y-3 overflow-auto px-4 py-4">
+          {scope === "app" && items.length === 0 && <p className="text-sm leading-relaxed text-muted-foreground">{t("app_builder_hint")}</p>}
           {items.map((m, i) => (
             <div key={i}>
               {m.role === "process" ? (
@@ -237,6 +251,7 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
             ))}
           </div>
         )}
+        {!canAfford && <Button onClick={()=>buyCredits(quote.data?.credits)}>{t("buy_credits")}</Button>}
         <form className={`flex items-end gap-2 border-t border-border p-3 ${shots.length ? "border-t-0" : ""}`}
           onSubmit={(e) => { e.preventDefault(); send(text); }}
           onDragOver={(e) => e.preventDefault()}
@@ -245,11 +260,11 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
             onChange={(e) => { addShots(e.target.files); if (fileRef.current) fileRef.current.value = ""; }} />
           <Button type="button" variant="ghost" size="icon" title={t("attach_shot")} disabled={busy}
             onClick={() => fileRef.current?.click()}><ImagePlus className="size-4" /></Button>
-          <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={t("chat_ph")} rows={2}
+          <Textarea ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} aria-label={t(scope === "app" ? "app_builder" : "chat")} placeholder={t(scope === "app" ? "app_builder_ph" : "chat_ph")} rows={2}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); } }}
             onPaste={(e) => { const f = Array.from(e.clipboardData.files); if (f.length) { e.preventDefault(); addShots(f); } }}
             className="min-h-0 resize-none" disabled={busy} />
-          <Button type="submit" disabled={busy || (!text.trim() && !shots.length)}
+          <Button type="submit" aria-label={t("app_send")} disabled={!canAfford || busy || (!text.trim() && !shots.length)}
             className="grad-olive text-primary-foreground"><Send className="size-4" /></Button>
         </form>
       </aside>
