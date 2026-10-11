@@ -1,4 +1,6 @@
 import * as React from "react";
+import { pollJob } from "./job-polling";
+export { JobCancelled } from "./job-polling";
 
 /* Typed client for the Bizzmind FastAPI backend.
    Same-origin (Next.js rewrites /api → FastAPI), cookies carry the Supabase
@@ -212,7 +214,6 @@ export const cancelJob = (id: string) =>
 
 /* Run a background job: POST → {job_id} → poll until done. Inline results
    (INLINE_JOBS) come back directly. */
-export class JobCancelled extends Error {}
 
 export async function runJob<T>(
   start: Promise<{ job_id: string } | T>,
@@ -227,19 +228,11 @@ export async function runJob<T>(
   // serverless worker: this request runs the job and stays open until it ends;
   // a dedicated worker (local dev) may claim it first — then it's a no-op
   fetch(`/api/jobs/${id}/run`, { method: "POST", credentials: "same-origin", keepalive: true }).catch(() => {});
-  let since = 0;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 1200));
-    if (signal?.aborted) {
-      await cancelJob(id);
-      throw new JobCancelled("cancelled");
-    }
-    const j = await endpoints.job<T>(id, since);
-    for (const ev of j.events) { since = ev.seq; onEvent?.(ev); }
-    if (j.status === "done") return (j.result ?? {}) as T;
-    if (j.status === "cancelled") throw new JobCancelled("cancelled");
-    if (j.status === "failed") throw new Error(j.error ?? "job failed");
-  }
+  return pollJob<T, JobEvent>({
+    read: (since) => endpoints.job<T>(id, since),
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    cancel: () => cancelJob(id), onEvent, signal,
+  });
 }
 
 

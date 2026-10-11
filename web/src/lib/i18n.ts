@@ -9,6 +9,9 @@ export const dict = {
   bg: {
     scenario_snapshot_note: "Началните стойности са снимка на модела при създаване. Поискай обновяване на допусканията през чата, ако източникът се промени.",
     scenario_percentage_points: "п.п.",
+    chat_background_hint: "Можеш да смениш таба — задачата ще продължи. Спира се само с бутона „Спри“.",
+    chat_running: "Задачата продължава",
+    chat_finished: "{name}: задачата е готова.",
     scenario_badge: "Работно пространство за решения",
     scenario_controls: "Промени допусканията",
     scenario_original: "Изходен модел",
@@ -486,6 +489,9 @@ export const dict = {
   en: {
     scenario_snapshot_note: "Starting values are a snapshot from when this model was built. Ask the chat to refresh assumptions when source data changes.",
     scenario_percentage_points: "pp",
+    chat_background_hint: "You can switch tabs — this task will keep running. Use Stop to cancel it.",
+    chat_running: "Task in progress",
+    chat_finished: "{name}: task completed.",
     scenario_badge: "Decision workspace",
     scenario_controls: "Adjust your assumptions",
     scenario_original: "Source baseline",

@@ -33,6 +33,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [selections, setSelections] = useState<Selections>({});
   const [chatOpen, setChatOpen] = useState(false);
   const [appChatOpen, setAppChatOpen] = useState(false);
+  const [appChatBusy, setAppChatBusy] = useState(false);
+  const [dashboardChatBusy, setDashboardChatBusy] = useState(false);
   const [chatSeed, setChatSeed] = useState<string | null>(null);
   const [pendingReview, setPendingReview] = useState<{ tables: string[] } | null>(null);
   const uploadRef = useRef<(() => void) | null>(null);
@@ -142,6 +144,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 <TabsTrigger key={k} value={k}
                   className="rounded-none border-b-2 border-transparent px-4 text-[13.5px] font-semibold text-muted-foreground data-[state=active]:border-olive data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none">
                   {t(k === "dash" ? "tab_dash" : k === "app" ? "tab_app" : k === "files" ? "tab_files" : "tab_data")}
+                  {((k === "app" && appChatBusy) || (k === "dash" && dashboardChatBusy)) && <span role="status" aria-label={t("chat_running")} className="ml-1 size-3 animate-spin rounded-full border-2 border-olive/30 border-t-olive" />}
                   {k === "app" && <span className="ml-1.5 rounded bg-olive/20 px-1 text-[9px] font-extrabold text-olive">BETA</span>}
                 </TabsTrigger>
               ))}
@@ -213,12 +216,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           )}
         </main>
       </div>
-      {state.data && (tab === "app" ? (
-        <ChatPanel key="app-builder" pid={pid} initial={state.data.chat} open={appChatOpen} onOpenChange={setAppChatOpen} scope="app" seed={chatSeed} onSeedUsed={()=>setChatSeed(null)} />
-      ) : (
-        <ChatPanel key="dashboard-chat" pid={pid} initial={state.data.chat} open={chatOpen} onOpenChange={setChatOpen} pending={pendingReview}
-          seed={chatSeed} onSeedUsed={() => setChatSeed(null)} />
-      ))}
+      {state.data && <>
+        <ChatPanel key={`${pid}:app-builder`} pid={pid} initial={state.data.chat} open={appChatOpen} onOpenChange={setAppChatOpen} scope="app"
+          visible={tab === "app"} onBusyChange={setAppChatBusy} seed={chatSeed} onSeedUsed={()=>setChatSeed(null)} />
+        <ChatPanel key={`${pid}:dashboard-chat`} pid={pid} initial={state.data.chat} open={chatOpen} onOpenChange={setChatOpen} pending={pendingReview}
+          visible={tab !== "app"} onBusyChange={setDashboardChatBusy} />
+      </>}
     </>
   );
 }

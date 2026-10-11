@@ -11,8 +11,9 @@ import { ChevronDown, ImagePlus, MessageCircle, Send, X } from "lucide-react";
 
 type Item = ChatMessage & { live?: JobEvent[]; started?: number; procId?: string; shots?: string[] };
 
-export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onSeedUsed, embedded = false, scope = "dashboard" }: {
+export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onSeedUsed, embedded = false, scope = "dashboard", visible = true, onBusyChange }: {
   embedded?: boolean; scope?: "dashboard" | "app";
+  visible?: boolean; onBusyChange?: (busy: boolean) => void;
   pid: string; initial: ChatMessage[]; open: boolean; onOpenChange: (o: boolean) => void;
   pending?: { tables: string[] } | null;
   seed?: string | null; onSeedUsed?: () => void;
@@ -24,6 +25,7 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
   const [busy, setBusy] = useState(false);
   const runningJob = useRef<string | null>(null);
   const resumeChecked = useRef(false);
+  const busyRef = useRef(false);
   const [shots, setShots] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const buyCredits = useBuyCredits();
@@ -42,14 +44,16 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [tick, setTick] = useState(0);
 
-  useEffect(() => { if (!busy) setItems(initial.filter(m=>(m.scope??"dashboard")===scope)); }, [initial, scope, busy]);
+  useEffect(() => { if (!busyRef.current) setItems(initial.filter(m=>(m.scope??"dashboard")===scope)); }, [initial, scope]);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => {                     // "change my app" from the App tab lands in the input
     if (seed) { setText(seed); inputRef.current?.focus(); inputRef.current?.scrollIntoView({behavior:"smooth",block:"center"}); onSeedUsed?.(); }
   }, [seed]);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { logRef.current?.scrollTo({ top: 1e9 }); }, [items, tick]);
+  useEffect(() => { logRef.current?.scrollTo({ top: 1e9 }); }, [items, tick, visible, open]);
   useEffect(() => { if (!busy) return; const id = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(id); }, [busy]);
 
-  async function run(label: string, start: Promise<{ job_id: string } | AgentResult>) {
+  async function run(label: string, start: Promise<{ job_id: string } | AgentResult>, recovering = false) {
+    busyRef.current = true;
     setBusy(true);
     const procId = `proc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setItems((it) => [...it, { role: "process", text: label, live: [], started: Date.now(), procId }]);
@@ -57,7 +61,14 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
       const res = await runJob<AgentResult>(start, (ev) => {
         setItems((it) => it.map((m) => (m.procId === procId ? { ...m, live: [...(m.live ?? []), ev].slice(-8) } : m)));
       }, undefined, (id) => { runningJob.current = id; cacheSet(`chat-job:${pid}:${scope}`,id); });
-      setItems((it) => [...it.filter((m) => m.procId !== procId), { role: "ai", text: res.reply || t("done"), questions: res.questions }]);
+      setItems((it) => {
+        const messages = it.filter((m) => m.procId !== procId);
+        const reply = res.reply || t("done");
+        // A reloaded page may already contain this completed reply from the server.
+        if (recovering && messages.at(-1)?.role === "ai" && messages.at(-1)?.text === reply) return messages;
+        return [...messages, { role: "ai", text: reply, questions: res.questions }];
+      });
+      toast.success(t("chat_finished", { name: t(scope === "app" ? "app_builder" : "chat") }));
       qc.invalidateQueries({ queryKey: ["state", pid] });
       qc.invalidateQueries({ queryKey: ["app", pid] });     // the agent may have edited the app
       // the charge is settled from real usage once the job ends — refresh and report it
@@ -73,17 +84,14 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
       setItems((it) => [...it.filter((m) => m.procId !== procId),
         { role: "event", text: stopped ? t("job_stopped") : t("problem", { msg: (e as Error).message }) }]);
       if (stopped) { qc.invalidateQueries({ queryKey: ["state", pid] }); qc.invalidateQueries({ queryKey: ["app", pid] }); }
-    } finally { setBusy(false); runningJob.current = null; cacheSet(`chat-job:${pid}:${scope}`,null); }
+    } finally { busyRef.current = false; setBusy(false); runningJob.current = null; cacheSet(`chat-job:${pid}:${scope}`,null); }
   }
 
   useEffect(() => {
     if (resumeChecked.current) return;
     resumeChecked.current = true;
     const id=cacheGet<string>(`chat-job:${pid}:${scope}`);
-    if (id) endpoints.job(id).then(j=>{
-      if (j.status === 'queued' || j.status === 'running') run(t('thinking'),Promise.resolve({job_id:id}));
-      else {cacheSet(`chat-job:${pid}:${scope}`,null);qc.invalidateQueries({queryKey:['state',pid]});qc.invalidateQueries({queryKey:['app',pid]});}
-    }).catch(()=>cacheSet(`chat-job:${pid}:${scope}`,null));
+    if (id) run(t("thinking"), Promise.resolve({job_id:id}), true);
   }, [pid,scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a fresh upload opens the brief form (the user frames the analysis first)
@@ -130,7 +138,9 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
     run(t("thinking"), endpoints.review(pid, tables, context, aim, model));
   }
 
-  
+  // Keep the job watcher and draft alive when another workspace tab is visible.
+  if (!visible) return null;
+
   return (
     <>
       {!embedded && !open && (
@@ -185,6 +195,7 @@ export function ChatPanel({ pid, initial, open, onOpenChange, pending, seed, onS
                       {t("stop")}
                     </button>
                   </div>
+                  <p className="mb-2 text-muted-foreground">{t("chat_background_hint")}</p>
                   <ul className="space-y-0.5 text-muted-foreground">
                     {m.live?.map((ev, li) => (
                       <li key={ev.seq}
