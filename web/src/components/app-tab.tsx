@@ -9,7 +9,7 @@ import { localeOf, useLang, useT, type Key } from "@/lib/i18n";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Blocks, Check, ChevronDown, MessageCircle, Plus, RefreshCcw, Sparkles, Trash2, Wallet, ArrowUpRight, ArrowDownUp, BarChart3, LayoutDashboard, List, Loader2, Search, SlidersHorizontal } from "lucide-react";
+import { Calculator, Blocks, Check, ChevronDown, MessageCircle, Plus, RefreshCcw, Sparkles, Trash2, Wallet, ArrowUpRight, ArrowDownUp, BarChart3, LayoutDashboard, List, Loader2, Search, SlidersHorizontal } from "lucide-react";
 import { useBuyCredits } from "@/components/buy-credits";
 import { useConfirm } from "@/components/confirm-dialog";
 import { ChartCard } from "@/components/chart-card";
@@ -17,9 +17,13 @@ import { selectAppRows } from "@/lib/app-workspace";
 import type { Chart } from "@/lib/api";
 import { TabLoading } from "@/components/dashboard-empty";
 
+import { FinancialCalculator } from "@/components/financial-calculator";
+import type { CalculatorConfig } from "@/lib/financial-calculator";
+
 interface Field { column: string; label: string; type?: string; required?: boolean; options_sql?: string }
 interface View {
-  type: "kpi" | "entry" | "table" | "chart";
+  type: "kpi" | "entry" | "table" | "chart" | "calculator";
+  calculator?: CalculatorConfig;
   mode?: "insert" | "edit";
   chart_type?: "bar" | "line" | "area" | "pie"; x_field?: string; y_fields?: string[];
   title: string; hint?: string; table?: string; editable_table?: string; sql?: string;
@@ -408,8 +412,8 @@ export function AppTab({ pid, hasTables, onAskChat }: {
 
   const focused = activeSection !== null && views[activeSection] ? activeSection : null;
   const ask=(prompt:string)=>{onAskChat?.(`${t("app_edit_prompt")}\n${prompt}`);};
-  const sectionIcon=(type:View["type"])=>type==='kpi'?LayoutDashboard:type==='entry'?Plus:type==='chart'?BarChart3:List;
-  return <div className="mx-auto w-full max-w-[1600px] space-y-6">
+  const sectionIcon=(type:View["type"])=>type==='calculator'?Calculator:type==='kpi'?LayoutDashboard:type==='entry'?Plus:type==='chart'?BarChart3:List;
+  return <div className="mx-auto w-full max-w-[1800px] space-y-6">
     <section className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 md:p-8">
       <div className="pointer-events-none absolute -right-20 -top-32 size-96 rounded-full bg-olive/10 blur-3xl"/>
       <div className="relative flex flex-wrap items-start justify-between gap-5"><div className="max-w-3xl"><span className="mb-3 inline-flex items-center gap-2 text-xs font-semibold text-olive"><span className="size-1.5 rounded-full bg-olive"/>{t('app_live')}</span><h2 className="text-2xl font-semibold tracking-tight md:text-3xl">{spec?.title}</h2>{spec?.subtitle&&<p className="mt-3 text-sm leading-relaxed text-muted-foreground">{spec.subtitle}</p>}</div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={()=>{qc.invalidateQueries({queryKey:['app-sql',pid]});app.refetch();}}><RefreshCcw className={`size-3.5 ${app.isFetching?'animate-spin':''}`}/>{t('app_refresh_data')}</Button><Button variant="ghost" size="sm" onClick={propose}>{t('app_rebuild')}</Button></div></div>
@@ -431,7 +435,7 @@ export function AppTab({ pid, hasTables, onAskChat }: {
             <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">{v.hint || t(`app_overview_${v.type}` as Key)}</p>
             <span className="mt-auto flex items-center gap-2 pt-5 text-xs font-semibold text-olive">{t('app_open_section')}<ArrowUpRight className="size-3.5"/></span>
           </button>;})}</div>
-        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'&&views[focused].mode==='edit'?<EditView pid={pid} view={views[focused]} index={focused}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
+        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='calculator'&&views[focused].calculator?<FinancialCalculator key={JSON.stringify([views[focused].calculator!.kind,views[focused].calculator!.defaults])} config={views[focused].calculator!} title={views[focused].title} hint={views[focused].hint}/>:views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'&&views[focused].mode==='edit'?<EditView pid={pid} view={views[focused]} index={focused}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
 
         {spec?.generated_at&&<p className="text-[11px] text-muted-foreground">{t('app_generated',{at:spec.generated_at})}</p>}
       </div>

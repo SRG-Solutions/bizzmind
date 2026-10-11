@@ -42,7 +42,7 @@ function isHorizontal(chart: Chart) {
   return chart.chart_type === "bar" && (cats.length > 8 || cats.some((c) => c.length > 14));
 }
 
-export function buildOption(chart: Chart, L: (s: string) => string, LV: (v: unknown) => unknown, P: Palette = PALETTES.dark): EChartsOption {
+export function buildOption(chart: Chart, L: (s: string) => string, LV: (v: unknown) => unknown, P: Palette = PALETTES.dark, timeline = false): EChartsOption {
   const { SERIES, INK, MUTED, GRID, CARD, TIP } = P;
   const rows = chart.rows ?? [], x = chart.x_field, ys = chart.y_fields ?? [];
   const base = { color: SERIES, textStyle: { fontFamily: "var(--font-plex), system-ui" } } as EChartsOption;
@@ -76,13 +76,13 @@ export function buildOption(chart: Chart, L: (s: string) => string, LV: (v: unkn
       })),
     };
   }
-  if (isHorizontal(chart)) {
+  if (!timeline && isHorizontal(chart)) {
     return {
       ...base, tooltip: { ...tooltip, trigger: "axis", valueFormatter: fmtNum }, legend,
       grid: { left: 8, right: 24, top: legend ? 34 : 12, bottom: 28, containLabel: true },
       xAxis: { type: "value", axisLabel: { ...axisText, formatter: fmtNum }, splitLine: { lineStyle: { color: GRID } } },
       yAxis: { type: "category", data: cats.slice().reverse(), axisLabel: { ...axisText, color: INK, fontSize: 11.5, formatter: (v: string) => (v.length > 26 ? v.slice(0, 25) + "…" : v) }, axisTick: { show: false }, axisLine: { show: false } },
-      series: ys.map((y) => ({ name: L(y), type: "bar", barMaxWidth: 20, barGap: "12%", itemStyle: { borderRadius: [0, 4, 4, 0] }, data: rows.map((r) => Number(r[y])).reverse() })),
+      series: ys.map((y) => ({ name: L(y), type: "bar", barMaxWidth: 20, barGap: "12%", itemStyle: { borderRadius: [0, 4, 4, 0] }, data: rows.map((r) => r[y] == null ? null : Number(r[y])).reverse() })),
     };
   }
   const isLine = chart.chart_type === "line" || chart.chart_type === "area";
@@ -92,13 +92,13 @@ export function buildOption(chart: Chart, L: (s: string) => string, LV: (v: unkn
     xAxis: { type: "category", data: cats, axisLabel: { ...axisText, rotate: cats.length > 6 ? 30 : 0, hideOverlap: true, formatter: (v: string) => (v.length > 16 ? v.slice(0, 15) + "…" : v) }, axisTick: { show: false }, axisLine: { lineStyle: { color: GRID } } },
     yAxis: { type: "value", axisLabel: { ...axisText, formatter: fmtNum }, splitLine: { lineStyle: { color: GRID } } },
     series: ys.map((y, i) => isLine
-      ? { name: L(y), type: "line", smooth: true, symbolSize: 6, lineStyle: { width: 2.5 }, areaStyle: chart.chart_type === "area" ? { opacity: 0.18 } : undefined, data: rows.map((r) => Number(r[y])) }
-      : { name: L(y), type: "bar", barMaxWidth: 34, itemStyle: { borderRadius: [4, 4, 0, 0], color: ys.length === 1 ? SERIES[0] : SERIES[i % SERIES.length] }, data: rows.map((r) => Number(r[y])) }),
+      ? { name: L(y), type: "line", smooth: !timeline, symbolSize: timeline ? 3 : 6, lineStyle: { width: 2.5 }, areaStyle: chart.chart_type === "area" ? { opacity: 0.18 } : undefined, data: rows.map((r) => r[y] == null ? null : Number(r[y])) }
+      : { name: L(y), type: "bar", barMaxWidth: 34, itemStyle: { borderRadius: [4, 4, 0, 0], color: ys.length === 1 ? SERIES[0] : SERIES[i % SERIES.length] }, data: rows.map((r) => r[y] == null ? null : Number(r[y])) }),
   };
 }
 
-export function ChartCard({ chart, i18n, onPick, wide, drag }: {
-  chart: Chart; i18n?: I18nInfo; onPick?: (chart: Chart, label: string) => void; wide?: boolean;
+export function ChartCard({ chart, i18n, onPick, wide, drag, timeline = false }: {
+  chart: Chart; timeline?: boolean; i18n?: I18nInfo; onPick?: (chart: Chart, label: string) => void; wide?: boolean;
   drag?: {
     dragging: boolean; over: boolean;
     onStart: (id: number) => void; onEnd: () => void;
@@ -108,8 +108,8 @@ export function ChartCard({ chart, i18n, onPick, wide, drag }: {
   const t = useT();
   const { theme } = useTheme();
   const { L, LV } = useLabelMaps(i18n);
-  const option = useMemo(() => (chart.chart_type === "table" ? null : buildOption(chart, L, LV, PALETTES[theme])), [chart, L, LV, theme]);
-  const tall = isHorizontal(chart) ? Math.min(560, Math.max(280, chart.rows.length * 30 + 80)) : 300;
+  const option = useMemo(() => (chart.chart_type === "table" ? null : buildOption(chart, L, LV, PALETTES[theme], timeline)), [chart, L, LV, theme, timeline]);
+  const tall = !timeline && isHorizontal(chart) ? Math.min(560, Math.max(280, chart.rows.length * 30 + 80)) : 300;
 
   return (
     <Card

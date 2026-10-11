@@ -80,10 +80,57 @@ class _LazyClient:
 client = _LazyClient()
 
 
+CALCULATOR_GUIDANCE = """
+Optional scenario calculators are supported in the App tab. Offer one ONLY when
+it serves a concrete decision in this project's data and the user's goal. Never
+add a generic calculator to every app or default to mortgages. Select the relevant
+model; do not offer a menu of unrelated calculator types inside the app.
+View format: {"type":"calculator","title":"<specific business decision>",
+"hint":"<where starting values came from and which are assumptions>",
+"calculator":{"kind":"forecast|investment|demand|mortgage","currency":"EUR|USD|GBP|BGN",
+"defaults":{...all inputs for the selected model...}}}.
+Models and required numeric inputs:
+- forecast: revenue (base annual revenue), growth (annual %, -100..200), margin
+  (gross margin %, 0..100), costs (annual fixed costs), years (integer 1..10).
+  Compounding revenue growth, fixed margin and annual fixed costs; no tax/financing.
+- investment: initial, contribution (month-end amount), return (effective annual
+  %, -50..100), years (integer 1..40). Monthly compounding; no tax/fees/inflation.
+  This is an accumulation model, NOT project ROI/NPV/IRR. Do not promise unsupported models.
+- demand: demand (units per 30-day month), growth (one-time adjustment %, -100..200),
+  stock, incoming (units arriving in one delivery), lead (days until that delivery,
+  integer 0..365), horizon (planning days, integer 1..365), safety (buffer days,
+  integer 0..365). Uniform daily demand, stock trajectory and additional stock
+  needed for horizon plus buffer; not a statistical or seasonal demand forecast.
+- mortgage: price, down (0..price), rate (fixed nominal annual %, 0..30), years
+  (integer 1..40), extra (additional monthly payment). Only for property financing.
+Monetary/quantity inputs must be nonnegative. Required defaults must come from
+observed data, confirmed business context or explicit user assumptions. Read data
+with run_sql_query when available; ask focused questions when inputs or units are
+missing. Never invent company figures, silently assume a currency, or present
+illustrative assumptions as facts. Label source/period/units in hint. If the
+available model does not fit, clarify instead of misrepresenting the calculation.
+Optional calculator.charts customizes the LIVE accompanying charts. Omit it for
+context-specific defaults (2-3 charts). Each chart: {"title":"<user language>",
+"chart_type":"line|area|bar","y_fields":["<model output>"],"compare_baseline":true|false}.
+Allowed output names: mortgage: balance, principal_paid, interest_paid (cumulative);
+forecast: revenue, profit, expenses; investment: value, contributed, gain;
+demand: stock (may be negative), shortage, demand (cumulative), receipts (cumulative).
+IMPORTANT: demand and receipts ARE running totals from day 0, not daily flows.
+Cumulative demand/receipts charts are supported directly; never claim otherwise.
+Use 1-6 charts, at most 3 per row. Every chart uses the scenario's year/day axis.
+To change calculator charts through chat, edit calculator.charts in the COMPLETE
+app spec, preserving its inputs and unrelated views. Do NOT create SQL/dashboard
+charts for this: calculator charts recalculate from the same live input state.
+Calculators update instantly in the browser without another AI call. They support
+a temporary comparison baseline; they do NOT write back to project records, save
+scenarios across navigation, or automatically refresh their starting values from
+spreadsheet data. Preserve existing views when adding one through update_app.
+"""
+
 APP_CHAT_TOOLS = {"run_sql_query", "update_app", "present_questions"}
 APP_CHAT_RULES = """You are the builder inside the App tab. Work ONLY on the app, never the dashboard.
 The user describes operations they want to perform on spreadsheet data. Build usable entry/edit
-forms and working lists via update_app, not dashboard charts or a narrative analysis.
+forms, working lists and context-relevant scenario calculators via update_app, not dashboard charts or a narrative analysis.
 For editing existing records use an entry view with mode="edit", table (or tables), and fields.
 The UI lets the user find and select a record, review its values and explicitly save changes.
 For adding records use mode="insert" (default). Each field must reference a real source column.
@@ -222,7 +269,7 @@ TOOLS = [
     {
         "name": "update_app",
         "description": (
-            "Change the project's mini-app (the App tab): add, edit, remove or reorder its "
+            CALCULATOR_GUIDANCE + "Change the project's mini-app (the App tab): add, edit, remove or reorder its "
             "views. Pass the COMPLETE new spec — it replaces the old one, so start from the "
             "current app given in <current_app> and apply only what the user asked for. "
             "Every view also accepts optional layout: \"collapsible\":true makes it a fold-out "
@@ -1324,7 +1371,7 @@ async def run_deck(proj: Project):
 
 # ------------------------------------------------------------------ app builder
 
-APP_PROMPT = """You turn a spreadsheet-backed project into a small internal APP.
+APP_PROMPT = CALCULATOR_GUIDANCE + """You turn a spreadsheet-backed project into a small internal APP.
 
 The user's data already lives in Postgres tables (schema below). Instead of a
 dashboard, design the day-to-day WORKING SURFACE that replaces the spreadsheet:
@@ -1441,7 +1488,7 @@ async def run_app(proj: Project, brief: str = ""):
     return {"app": spec}
 
 
-APP_PROPOSE_PROMPT = """You are a product person looking at a company's spreadsheets.
+APP_PROPOSE_PROMPT = CALCULATOR_GUIDANCE + """You are a product person looking at a company's spreadsheets.
 
 Study the schema and known facts below and propose 2-3 DIFFERENT internal apps
 that would take this работа out of Excel — each one a concrete working surface
