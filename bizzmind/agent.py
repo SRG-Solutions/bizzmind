@@ -127,8 +127,52 @@ scenarios across navigation, or automatically refresh their starting values from
 spreadsheet data. Preserve existing views when adding one through update_app.
 """
 
+SCENARIO_GUIDANCE = """
+Build an INTERACTIVE decision workspace when the user asks for a calculator,
+what-if model, sensitivity analysis or scenario planning. Static KPI/table/chart
+views cannot fulfill that request. Prefer a custom scenario for business models
+that do not match the four preset calculators. Never substitute an accumulation
+calculator for project investment economics.
+Custom view: {"type":"scenario","title":"<decision>","hint":"<source workbook,
+period, units and explicit modeling assumptions/limitations>","scenario":{
+"inputs":[{"id":"price","label":"Price","unit":"USD","value":10,"min":0,"max":100,"step":1}],
+"periods":5,"period_label":"Year",
+"outputs":[{"id":"revenue","label":"Revenue","unit":"USD","formula":["mul","price",100]},
+{"id":"cash","label":"Cumulative cash","unit":"USD","initial":-1000,"formula":["add","prev.cash","revenue"]}],
+"metrics":[{"output":"cash","aggregate":"last","label":"Closing cash"}],
+"charts":[{"title":"Cash outlook","chart_type":"line","y_fields":["cash"],"compare_baseline":true}],
+"presets":[{"name":"Illustrative higher price","values":{"price":12}}]}}.
+This is a FORMAT EXAMPLE, not real company data. Read project data before building.
+Use 1-16 bounded inputs, 1-24 ordered outputs, 1-6 metrics, 1-6 live charts and
+0-5 clearly labeled hypothetical presets. Only propose a relevant model.
+Formulas are prefix arrays, never JavaScript or SQL: add/mul/min/max (2-16 args),
+sub/div/pow/gt/gte/lt/lte (2), abs (1), if (condition, true, false; lazy branches).
+References are input ids, earlier output ids in the SAME period, "period" (1-based),
+or "prev.<output>". Output initial defaults to zero and can use inputs only.
+IDs: lowercase ASCII letters/digits/underscores, start with a letter, <=40 chars;
+"period", "constructor", "prototype" are reserved. No cycles in same-period outputs.
+periods is a number or input expression resolving to an integer 1-120. Use at most
+12 expression levels and 1500 expression nodes. Guard zero denominators with if.
+Metrics aggregate an output over periods using last/sum/min/max. Units are per output.
+Keep input, output and chart labels concise (ideally under 40 characters); put
+modeling details in hint. Keep hint to 3-5 short sentences so controls remain visible.
+Match labels to the exact formula; distinguish operating cash, cumulative cash,
+NPV, enterprise value and cash including terminal value. Do not imply a partial
+sensitivity model recalculates every accounting dependency in the workbook.
+Use current data for defaults; explain fixed vs variable costs and tax treatment.
+Do not invent missing business assumptions: ask focused questions before building.
+Changing inputs updates metrics and charts instantly with NO AI call. Users can
+save named scenarios in THIS BROWSER only, apply them or compare them as baseline.
+Saved scenarios are NOT shared, do not update source records, and starting data
+is a snapshot. Changes to the model create a separate saved-scenario collection.
+Use update_app with the complete spec to modify inputs, formulas or live charts.
+Preserve unrelated sections when adding a module; put the new requested workflow
+first or set the app's start_view (zero-based index) to it. A meaningful app may
+contain just ONE scenario view: don't pad it with report tables or duplicate KPIs.
+"""
+
 APP_CHAT_TOOLS = {"run_sql_query", "update_app", "present_questions"}
-APP_CHAT_RULES = """You are the builder inside the App tab. Work ONLY on the app, never the dashboard.
+APP_CHAT_RULES = SCENARIO_GUIDANCE + CALCULATOR_GUIDANCE + """You are the builder inside the App tab. Work ONLY on the app, never the dashboard.
 The user describes operations they want to perform on spreadsheet data. Build usable entry/edit
 forms, working lists and context-relevant scenario calculators via update_app, not dashboard charts or a narrative analysis.
 For editing existing records use an entry view with mode="edit", table (or tables), and fields.
@@ -269,7 +313,7 @@ TOOLS = [
     {
         "name": "update_app",
         "description": (
-            CALCULATOR_GUIDANCE + "Change the project's mini-app (the App tab): add, edit, remove or reorder its "
+            SCENARIO_GUIDANCE + CALCULATOR_GUIDANCE + "Change the project's mini-app (the App tab): add, edit, remove or reorder its "
             "views. Pass the COMPLETE new spec — it replaces the old one, so start from the "
             "current app given in <current_app> and apply only what the user asked for. "
             "Every view also accepts optional layout: \"collapsible\":true makes it a fold-out "
@@ -1371,7 +1415,7 @@ async def run_deck(proj: Project):
 
 # ------------------------------------------------------------------ app builder
 
-APP_PROMPT = CALCULATOR_GUIDANCE + """You turn a spreadsheet-backed project into a small internal APP.
+APP_PROMPT = SCENARIO_GUIDANCE + CALCULATOR_GUIDANCE + """You turn a spreadsheet-backed project into a small internal APP.
 
 The user's data already lives in Postgres tables (schema below). Instead of a
 dashboard, design the day-to-day WORKING SURFACE that replaces the spreadsheet:
@@ -1410,10 +1454,11 @@ Rules:
 - The UI includes section navigation, table search/sort and a natural-language edit composer.
 - Charts support bar, line, area and pie; x_field and y_fields must match query output columns.
   Use a chart when trends or comparisons help the decision. Never invent data or projections.
-- Put indicators first, a useful working list or chart next, then entry forms.
-  Keep entry forms collapsed initially. Use half-width only for compact views.
-- 3 to 8 views. Always include at least one "entry" view (the app must be
-  usable for daily input) and one "kpi" row.
+- Put the primary user workflow first and set start_view to its zero-based index.
+- Use 1 to 4 purposeful views. Entry forms, KPI rows and report tables are OPTIONAL.
+  For planning, build an interactive scenario with business levers, live results,
+  comparison and named scenarios. For record management, build usable entry/edit
+  forms. Every section must serve a concrete action or decision.
 - CRITICAL — many tables of the same shape (one sheet per site/store/month) are
   ONE entry view with the "tables" list: every table becomes a picker option
   with its human label, and the fields are shared. NEVER build the app around a
@@ -1488,7 +1533,7 @@ async def run_app(proj: Project, brief: str = ""):
     return {"app": spec}
 
 
-APP_PROPOSE_PROMPT = CALCULATOR_GUIDANCE + """You are a product person looking at a company's spreadsheets.
+APP_PROPOSE_PROMPT = SCENARIO_GUIDANCE + CALCULATOR_GUIDANCE + """You are a product person looking at a company's spreadsheets.
 
 Study the schema and known facts below and propose 2-3 DIFFERENT internal apps
 that would take this работа out of Excel — each one a concrete working surface

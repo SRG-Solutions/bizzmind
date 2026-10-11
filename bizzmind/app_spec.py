@@ -2,9 +2,11 @@
 def validate_app_spec(spec: object) -> None:
     if not isinstance(spec, dict) or not isinstance(spec.get('views'), list) or not spec['views']:
         raise ValueError("The spec needs a non-empty 'views' list.")
+    if 'start_view' in spec and (type(spec['start_view']) is not int or not 0 <= spec['start_view'] < len(spec['views'])):
+        raise ValueError('start_view must identify an existing view.')
     for view in spec['views']:
-        if not isinstance(view, dict) or view.get('type') not in {'kpi', 'entry', 'table', 'chart', 'calculator'}:
-            raise ValueError('Supported view types: kpi, entry, table, chart, calculator.')
+        if not isinstance(view, dict) or view.get('type') not in {'kpi', 'entry', 'table', 'chart', 'calculator', 'scenario'}:
+            raise ValueError('Supported view types: kpi, entry, table, chart, calculator, scenario.')
         kind = view['type']
         if kind == 'entry' and not (view.get('table') or view.get('tables')):
             raise ValueError("An entry view needs 'table' or 'tables'.")
@@ -14,6 +16,11 @@ def validate_app_spec(spec: object) -> None:
             fields = view.get('fields')
             if not isinstance(fields, list) or not fields or any(not isinstance(f, dict) or not isinstance(f.get('column'), str) or not f['column'].strip() for f in fields):
                 raise ValueError('An edit form needs real writable fields.')
+        if kind == 'scenario':
+            from bizzmind.scenario import validate_scenario
+            if not isinstance(view.get('hint'), str) or not view['hint'].strip():
+                raise ValueError('A scenario needs a readable explanation of its assumptions and sources.')
+            validate_scenario(view.get('scenario'))
         if kind == 'calculator':
             validate_calculator(view)
         if kind == 'chart':

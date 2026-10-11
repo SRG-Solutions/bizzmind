@@ -20,9 +20,13 @@ import { TabLoading } from "@/components/dashboard-empty";
 import { FinancialCalculator } from "@/components/financial-calculator";
 import type { CalculatorConfig } from "@/lib/financial-calculator";
 
+import { ScenarioView } from "@/components/scenario-view";
+import type { ScenarioSpec } from "@/lib/scenario";
+
 interface Field { column: string; label: string; type?: string; required?: boolean; options_sql?: string }
 interface View {
-  type: "kpi" | "entry" | "table" | "chart" | "calculator";
+  type: "kpi" | "entry" | "table" | "chart" | "calculator" | "scenario";
+  scenario?: ScenarioSpec;
   calculator?: CalculatorConfig;
   mode?: "insert" | "edit";
   chart_type?: "bar" | "line" | "area" | "pie"; x_field?: string; y_fields?: string[];
@@ -32,7 +36,7 @@ interface View {
   items?: { label: string; sql: string; unit?: string }[];
   fields?: Field[];
 }
-interface AppSpec { title?: string; subtitle?: string; views?: View[]; generated_at?: string }
+interface AppSpec { title?: string; subtitle?: string; views?: View[]; start_view?: number; generated_at?: string }
 interface Proposal { id: string; title: string; pitch: string; does?: string[]; for_whom?: string; effort?: string }
 interface AppPlan {
   reading?: string;
@@ -227,7 +231,7 @@ export function AppTab({ pid, hasTables, onAskChat }: {
   const buyCredits = useBuyCredits();
   const confirm = useConfirm();
   const hydrated = useCachedPlaceholder();
-  const [activeSection, setActiveSection] = useState<number | null>(null);
+  const [activeSection, setActiveSection] = useState<number | null | undefined>(undefined);
 
 
   const [building, setBuilding] = useState(false);
@@ -410,9 +414,11 @@ export function AppTab({ pid, hasTables, onAskChat }: {
     );
   }
 
-  const focused = activeSection !== null && views[activeSection] ? activeSection : null;
+  const initialSection = spec?.start_view ?? views.findIndex(v=>v.type==='scenario'||v.type==='calculator');
+  const selected = activeSection===undefined ? (initialSection>=0?initialSection:null) : activeSection;
+  const focused = selected !== null && views[selected] ? selected : null;
   const ask=(prompt:string)=>{onAskChat?.(`${t("app_edit_prompt")}\n${prompt}`);};
-  const sectionIcon=(type:View["type"])=>type==='calculator'?Calculator:type==='kpi'?LayoutDashboard:type==='entry'?Plus:type==='chart'?BarChart3:List;
+  const sectionIcon=(type:View["type"])=>(type==='calculator'||type==='scenario')?Calculator:type==='kpi'?LayoutDashboard:type==='entry'?Plus:type==='chart'?BarChart3:List;
   return <div className="mx-auto w-full max-w-[1800px] space-y-6">
     <section className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 md:p-8">
       <div className="pointer-events-none absolute -right-20 -top-32 size-96 rounded-full bg-olive/10 blur-3xl"/>
@@ -435,7 +441,7 @@ export function AppTab({ pid, hasTables, onAskChat }: {
             <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">{v.hint || t(`app_overview_${v.type}` as Key)}</p>
             <span className="mt-auto flex items-center gap-2 pt-5 text-xs font-semibold text-olive">{t('app_open_section')}<ArrowUpRight className="size-3.5"/></span>
           </button>;})}</div>
-        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='calculator'&&views[focused].calculator?<FinancialCalculator key={JSON.stringify([views[focused].calculator!.kind,views[focused].calculator!.defaults])} config={views[focused].calculator!} title={views[focused].title} hint={views[focused].hint}/>:views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'&&views[focused].mode==='edit'?<EditView pid={pid} view={views[focused]} index={focused}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
+        </section> : <div key={focused}><Foldable view={{...views[focused],collapsed:false}} onEdit={onAskChat?()=>ask(t('app_section_prompt',{title:views[focused].title})):undefined}>{views[focused].type==='scenario'&&views[focused].scenario?<ScenarioView key={JSON.stringify(views[focused].scenario)} pid={pid} spec={views[focused].scenario!} title={views[focused].title} hint={views[focused].hint}/>:views[focused].type==='calculator'&&views[focused].calculator?<FinancialCalculator key={JSON.stringify([views[focused].calculator!.kind,views[focused].calculator!.defaults])} config={views[focused].calculator!} title={views[focused].title} hint={views[focused].hint}/>:views[focused].type==='kpi'?<KpiView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='entry'&&views[focused].mode==='edit'?<EditView pid={pid} view={views[focused]} index={focused}/>:views[focused].type==='entry'?<EntryView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>:views[focused].type==='chart'?<AppChartView pid={pid} view={views[focused]}/>:<TableView pid={pid} view={views[focused]} inFold={!!views[focused].collapsible}/>}</Foldable></div>}
 
         {spec?.generated_at&&<p className="text-[11px] text-muted-foreground">{t('app_generated',{at:spec.generated_at})}</p>}
       </div>

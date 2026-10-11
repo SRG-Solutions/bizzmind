@@ -35,7 +35,7 @@ from bizzmind.brand import (  # noqa: F401
 )
 from bizzmind.localization import content_lang, localized_content, translatable_items  # noqa: F401
 from bizzmind.agent import (  # noqa: F401
-    TOOLS, build_system_prompt, client, dispatch_agent, execute_tool, run_agent_api,
+    TOOLS, CancelledByUser, build_system_prompt, client, dispatch_agent, execute_tool, run_agent_api,
     run_agent_subscription, run_deck, run_review, run_translate,
 )
 from bizzmind.auth_middleware import auth_middleware
