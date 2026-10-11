@@ -109,10 +109,11 @@ async def main(once: bool = False):
         log.info(f"[{job['project_id']}] job {job['id']} start: {job['kind']}")
         try:
             result = await run_job(job)
-            jobs.finish(job["id"], result)
             from bizzmind.routes.projects import _settle_job
-            _settle_job(job["project_id"], job["id"], job["kind"], job["payload"] or {},
-                        getattr(proj_ref[0], "app_touched", False) if proj_ref else False)
+            if not jobs.finish(job["id"], result, settle=lambda con: _settle_job(
+                    job["project_id"], job["id"], job["kind"], job["payload"] or {},
+                    getattr(proj_ref[0], "app_touched", False) if proj_ref else False, connection=con)):
+                raise core.CancelledByUser()
             log.info(f"[{job['project_id']}] job {job['id']} done in {time.monotonic() - t0:.1f}s")
         except core.CancelledByUser:
             jobs.cancel(job["id"])

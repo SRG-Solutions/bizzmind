@@ -1207,6 +1207,15 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
         except anthropic.APIConnectionError:
             raise RuntimeError(T(proj.lang, "err_ai_unreachable")) from None
 
+        # Every tool round is a separate paid request, including cache writes
+        # and reads. Record it before continuing or returning the final reply.
+        try:
+            from bizzmind.api_usage import record_response
+            record_response(proj, response)
+        except Exception:
+            log.exception("[%s] could not record API usage", proj.id)
+            raise RuntimeError(T(proj.lang, "err_ai_failed")) from None
+
         # Keep full content blocks (incl. thinking) so multi-step turns replay correctly
         proj.messages.append({"role": "assistant", "content": response.content})
 

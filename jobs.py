@@ -109,11 +109,24 @@ def claim_by_id(job_id: str) -> dict | None:
             "lang": r[4], "created_by": r[5]}
 
 
-def finish(job_id: str, result: dict | None) -> None:
+def finish(job_id: str, result: dict | None, settle=None) -> bool:
+    """Publish success and its credit deduction together, exactly once.
+
+    The same row lock is used by cancellation. A stopped job cannot publish
+    success or charge credits, and clients cannot observe done with an old balance.
+    """
     with db.pool().connection() as con:
+        row = con.execute("SELECT status FROM public.jobs WHERE id = %s FOR UPDATE", (job_id,)).fetchone()
+        if not row or row[0] in ("cancelled", "failed"):
+            return False
+        if row[0] == "done":
+            return True
+        if settle is not None:
+            settle(con)
         con.execute("UPDATE public.jobs SET status = 'done', result = %s, finished_at = now() WHERE id = %s",
                     (Jsonb(result or {}), job_id))
         con.commit()
+    return True
 
 
 _cancel_cache: dict = {}          # job_id -> (checked_at, cancelled?)

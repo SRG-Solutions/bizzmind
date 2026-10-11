@@ -8,6 +8,7 @@ import re
 import shutil
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 
@@ -46,16 +47,18 @@ def job_status(job_id: str, since: int = 0):
             "events": jobs.events(job_id, since)}
 
 
-def _settle_job(pid: str, job_id: str, kind: str, payload: dict, app_touched: bool = False) -> None:
+def _settle_job(pid: str, job_id: str, kind: str, payload: dict, app_touched: bool = False,
+                *, connection=None) -> None:
     """Charge the real AI spend of a finished job (nothing was taken up front)."""
     if kind not in ("chat", "review", "app", "deck"):
         return
-    with db.pool().connection() as con:
+    with (nullcontext(connection) if connection is not None else db.pool().connection()) as con:
         row = con.execute("SELECT cost_usd FROM public.jobs WHERE id = %s", (job_id,)).fetchone()
     cost = float(row[0]) if row and row[0] else 0.0
     billed = ("app" if (kind == "app" or app_touched)
               else "analysis" if kind == "review" else kind)
-    took = plans.settle(pid, billed, cost, int(payload.get("estimate") or 0), payload.get("model"))
+    took = plans.settle(pid, billed, cost, int(payload.get("estimate") or 0), payload.get("model"),
+                        **({"connection": connection} if connection is not None else {}))
     log.info(f"[{pid}] settled {billed}: ${cost:.4f} -> {took} credits"
              + (" (app edited via chat)" if app_touched and kind == "chat" else ""))
 
@@ -96,8 +99,9 @@ async def _execute_claimed(job: dict) -> dict:
             result = await run_translate(proj)
         else:
             raise ValueError(f"unknown job kind '{kind}'")
-        jobs.finish(job["id"], result)
-        _settle_job(proj.id, job["id"], kind, pl, getattr(proj, "app_touched", False))
+        if not jobs.finish(job["id"], result, settle=lambda con: _settle_job(
+                proj.id, job["id"], kind, pl, getattr(proj, "app_touched", False), connection=con)):
+            raise CancelledByUser()
         log.info(f"[{proj.id}] job {job['id']} done inline in {_time.monotonic() - t0:.1f}s")
         return {"status": "done"}
     except CancelledByUser:

@@ -287,6 +287,8 @@ export function AppTab({ pid, hasTables, onAskChat }: {
       await runJob(api(apiPath(pid, "/app/build"), { method: "POST", body: JSON.stringify({ brief: composeBrief() }) }), (ev) => setStep(ev.text), undefined, (id) => { runningJob.current = id; });
       await qc.invalidateQueries({ queryKey: ["app", pid] });
       qc.invalidateQueries({ queryKey: ["account"] });
+      qc.invalidateQueries({ queryKey: ["pres-credits", pid] });
+      qc.invalidateQueries({ queryKey: ["quote", pid] });
       setPlan(null);
       toast.success(t("app_ready"));
     } catch (e) { if (!(e instanceof JobCancelled)) toast.error((e as Error).message); }

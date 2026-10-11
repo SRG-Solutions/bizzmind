@@ -9,6 +9,7 @@ draw visibly large amounts. Anchor: EUR 20 -> 4000 credits (~EUR 0.005/cr).
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 
 from fastapi import HTTPException
 
@@ -239,7 +240,8 @@ def reserve(pid: str, kind: str, lang: str, model: str | None = None, tables: in
     return est
 
 
-def settle(pid: str, kind: str, cost_usd: float, estimate: int = 0, model: str | None = None) -> int:
+def settle(pid: str, kind: str, cost_usd: float, estimate: int = 0, model: str | None = None,
+           *, connection=None) -> int:
     """Charge exactly what the action cost us, marked up. Returns the credits
     taken. The estimate is accepted so callers stay unchanged, but it no longer
     caps the charge: a cap made us absorb every overrun (one looping message
@@ -249,7 +251,7 @@ def settle(pid: str, kind: str, cost_usd: float, estimate: int = 0, model: str |
     org = org_of_project(pid)
     if org is None or credits <= 0:
         return 0
-    with pool().connection() as con:
+    with (nullcontext(connection) if connection is not None else pool().connection()) as con:
         con.execute("UPDATE public.organizations SET credits_used = credits_used + %s WHERE id = %s",
                     (credits, org))
         con.execute("INSERT INTO public.credit_events (org_id, project_id, kind, credits) "
