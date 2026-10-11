@@ -66,7 +66,8 @@ class Project:
         self.messages: list = []          # API-backend conversation (in-memory)
         self.sub_client = None
         self.ai_model_id = None       # chosen per request/job: plans.MODELS[...]["model_id"]
-        self.app_touched = False      # the turn edited the mini-app (billed as such)            # Agent SDK session
+        self.app_touched = False      # the turn edited the mini-app (billed as such)
+        self.app_build_draft: dict | None = None  # staged spec for a running build, never persisted
         self.new_charts: list = []        # charts created during current turn
         self.new_questions: list = []     # interview questions from current turn
         self.activity: list = []

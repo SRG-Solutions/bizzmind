@@ -173,6 +173,20 @@ contain just ONE scenario view: don't pad it with report tables or duplicate KPI
 """
 
 APP_CHAT_TOOLS = {"run_sql_query", "update_app", "present_questions"}
+APP_BUILD_TOOLS = {"run_sql_query", "update_app"}
+APP_BUILD_RULES = """Build the app described in the selected brief. The proposal phase is
+already complete. Use the supplied schema and business context; inspect source
+data with run_sql_query when needed. Do not change the dashboard or source data.
+Submit the complete app with update_app. During this build it validates a draft;
+the app is saved only after the build finishes successfully. Correct any validation
+errors and submit again. After a successful submission, a short summary is enough.
+All user-facing text must be in __LANGUAGE__."""
+
+
+def _app_building(proj: Project) -> bool:
+    return getattr(proj, "app_build_draft", None) is not None
+
+
 APP_CHAT_RULES = SCENARIO_GUIDANCE + CALCULATOR_GUIDANCE + """You are the builder inside the App tab. Work ONLY on the app, never the dashboard.
 The user describes operations they want to perform on spreadsheet data. Build usable entry/edit
 forms, working lists and context-relevant scenario calculators via update_app, not dashboard charts or a narrative analysis.
@@ -469,7 +483,7 @@ TOOLS = [
 TOOL_DESC = {t["name"]: t["description"] for t in TOOLS}
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def api_tools(scope: str = "dashboard") -> list[dict]:
     """Compile strict API schemas without weakening our execution validation.
 
@@ -478,8 +492,9 @@ def api_tools(scope: str = "dashboard") -> list[dict]:
     """
     from anthropic import transform_schema
 
+    allowed = APP_BUILD_TOOLS if scope == "app_build" else APP_CHAT_TOOLS if scope == "app" else None
     return [dict(t, input_schema=transform_schema(t["input_schema"]))
-            for t in TOOLS if scope != "app" or t["name"] in APP_CHAT_TOOLS]
+            for t in TOOLS if allowed is None or t["name"] in allowed]
 
 
 @lru_cache(maxsize=1)
@@ -533,6 +548,8 @@ def execute_tool(proj: Project, name: str, tool_input: dict) -> tuple:
 
 def _execute_tool_inner(proj: Project, name: str, tool_input: dict) -> tuple:
     try:
+        if _app_building(proj) and name not in APP_BUILD_TOOLS:
+            return json.dumps({"error": "This build can only inspect data and submit an app with update_app."}), True
         if getattr(proj, "chat_scope", "dashboard") == "app" and name not in APP_CHAT_TOOLS:
             return json.dumps({"error": "This conversation can only build the app. Use update_app or ask a workflow question."}), True
         validator = _tool_validators().get(name)
@@ -618,6 +635,9 @@ def _execute_tool_inner(proj: Project, name: str, tool_input: dict) -> tuple:
             except ValueError as e:
                 return str(e), True
             views = spec["views"]
+            if _app_building(proj):
+                proj.app_build_draft["spec"] = spec
+                return json.dumps({"ok": True, "views": len(views), "status": "validated_draft"}), False
             spec["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
             proj.app = spec
             proj.save_app()
@@ -865,6 +885,8 @@ def prompt_rules(lang: str) -> str:
 
 
 def build_system_prompt(proj: Project) -> str:
+    if _app_building(proj):
+        return APP_BUILD_RULES.replace("__LANGUAGE__", LANG_NAMES[proj.lang])
     schema = json.dumps(describe_schema(proj), default=str)
     notes = "\n".join(f"- {n}" for n in proj.notes) or "(nothing recorded yet)"
     if getattr(proj, "chat_scope", "dashboard") == "app":
@@ -992,23 +1014,19 @@ pass unused fields as '' / []. present_questions takes
 {PROMPT_INTERVIEW}
 
 {prompt_rules(proj.lang)}"""
+    if _app_building(proj):
+        rules = APP_BUILD_RULES.replace("__LANGUAGE__", LANG_NAMES[proj.lang])
+        allowed = APP_BUILD_TOOLS
+    elif getattr(proj, "chat_scope", "dashboard") == "app":
+        rules = APP_CHAT_RULES + "\n" + prompt_rules(proj.lang)
+        allowed = APP_CHAT_TOOLS
+    else:
+        allowed = {t["name"] for t in TOOLS}
     return ClaudeAgentOptions(
-        system_prompt=(APP_CHAT_RULES + "\n" + prompt_rules(proj.lang)) if getattr(proj, "chat_scope", "dashboard") == "app" else rules,
+        system_prompt=rules,
         mcp_servers={"analytics": ANALYTICS_SERVER},
-        allowed_tools=(["mcp__analytics__" + name for name in sorted(APP_CHAT_TOOLS)] if getattr(proj, "chat_scope", "dashboard") == "app" else [
-            "mcp__analytics__run_sql_query",
-            "mcp__analytics__record_data_context",
-            "mcp__analytics__define_filter",
-            "mcp__analytics__update_app",
-            "mcp__analytics__create_chart",
-            "mcp__analytics__update_chart",
-            "mcp__analytics__delete_chart",
-            "mcp__analytics__define_view",
-            "mcp__analytics__drop_view",
-            "mcp__analytics__verify_dashboard",
-            "mcp__analytics__present_questions",
-            "Read",
-        ]),
+        allowed_tools=["mcp__analytics__" + name for name in sorted(allowed)] +
+                      ([] if _app_building(proj) or getattr(proj, "chat_scope", "dashboard") == "app" else ["Read"]),
         disallowed_tools=[
             "Bash", "Write", "Edit", "Glob", "Grep", "WebSearch",
             "WebFetch", "NotebookEdit", "Task", "TodoWrite",
@@ -1072,14 +1090,15 @@ async def run_agent_subscription(proj: Project, user_content: str, images: list 
             proj.sub_client = ClaudeSDKClient(options=sub_options(proj))
             await proj.sub_client.connect()
             proj.sub_lang = proj.lang
-            recap = conversation_recap(proj)
+            recap = "" if _app_building(proj) else conversation_recap(proj)
             log.info(f"[{proj.id}] agent[subscription]: new SDK session connected"
                      + (" (with conversation recap)" if recap else ""))
             proj.log_activity("info", T(proj.lang, "act_new_session")
                               + (T(proj.lang, "act_session_recap") if recap else ""))
 
-        ctx: dict = {"schema": describe_schema(proj), "known_facts": proj.notes}
-        if proj.app and proj.app.get("views"):
+        # Build prompts already carry the compacted schema and selected brief.
+        ctx: dict = {} if _app_building(proj) else {"schema": describe_schema(proj), "known_facts": proj.notes}
+        if not _app_building(proj) and proj.app and proj.app.get("views"):
             ctx["current_app"] = proj.app
         bf = brand_files(proj)
         if bf:
@@ -1106,6 +1125,8 @@ async def run_agent_subscription(proj: Project, user_content: str, images: list 
                             reply = text  # keep the last non-empty assistant text
                     elif isinstance(message, ResultMessage):
                         _record_usage(proj, message)
+                        if message.is_error and _app_building(proj):
+                            raise RuntimeError(T(proj.lang, "err_app_invalid"))
                         if message.is_error and not reply:
                             raise HTTPException(502, T(proj.lang, "err_ai_sub_failed",
                                                        detail=message.result))
@@ -1132,7 +1153,7 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
         log.error("agent: AI_BACKEND=api but ANTHROPIC_API_KEY is not set — "
                   "no AI work can run on this deployment")
         raise RuntimeError(T(proj.lang, "err_ai_offline"))
-    if not proj.messages:  # fresh process: continue from the stored transcript
+    if not proj.messages and not _app_building(proj):  # fresh chat: continue from the stored transcript
         user_content = conversation_recap(proj) + user_content
     if images:
         blocks: list = []
@@ -1160,6 +1181,8 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
             # a fix-check-fix loop runs until the money runs out.
             log.error(f"[{proj.id}] agent: hit the {MAX_TURNS}-turn ceiling — stopping")
             proj.log_activity("error", T(proj.lang, "act_turn_limit"))
+            if _app_building(proj):
+                raise RuntimeError(T(proj.lang, "err_app_invalid"))
             break
         try:
             response = client.beta.messages.create(
@@ -1172,7 +1195,7 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
                     "text": build_system_prompt(proj),
                     "cache_control": {"type": "ephemeral"},
                 }],
-                tools=api_tools(getattr(proj, "chat_scope", "dashboard")),
+                tools=api_tools("app_build" if _app_building(proj) else getattr(proj, "chat_scope", "dashboard")),
                 messages=proj.messages,
             )
         except anthropic.APIStatusError as e:
@@ -1188,6 +1211,8 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
         proj.messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "refusal":
+            if _app_building(proj):
+                raise RuntimeError(T(proj.lang, "err_ai_refusal"))
             reply = T(proj.lang, "err_ai_refusal")
             return {"reply": reply, "charts": list(proj.new_charts), "questions": [],
                     "tables": describe_schema(proj), "notes": proj.notes}
@@ -1453,7 +1478,9 @@ The user's data already lives in Postgres tables (schema below). Instead of a
 dashboard, design the day-to-day WORKING SURFACE that replaces the spreadsheet:
 where they enter new records, watch the current state and spot problems.
 
-Return ONE json object, no prose, no markdown fences:
+Submit ONE complete JSON object through update_app (no comments or markdown
+inside the spec). After the tool validates it, finish with a short summary.
+Example shapes for optional record-management views:
 
 {
   "title": "<app name in __LANGUAGE__>",
@@ -1530,7 +1557,11 @@ def _compact_schema(proj: Project) -> list:
 
 
 async def run_app(proj: Project, brief: str = ""):
-    """Design the project's mini-app from its data (one AI turn, no tools)."""
+    """Build in an isolated conversation, then validate and persist once.
+
+    update_app is a draft submission here. A natural-language final summary must
+    not turn a successful submission into a failed job, or save a partial build.
+    """
     lang = proj.lang
     pid = proj.id
     t0 = time.monotonic()
@@ -1544,21 +1575,58 @@ async def run_app(proj: Project, brief: str = ""):
     if brief:
         prompt += f"\n\n<what_the_user_asked_for>\n{brief}\n</what_the_user_asked_for>\n" \
                   "Build exactly this, using the rules above."
-    result = (await run_agent_subscription(proj, prompt)
-              if AI_BACKEND == "subscription"
-              else await run_in_threadpool(run_agent_api, proj, prompt))
-    raw = re.sub(r"^```(?:json)?|```$", "", result["reply"].strip(), flags=re.MULTILINE).strip()
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not m:
-        raise RuntimeError(T(lang, "err_app_invalid"))
-    spec = json.loads(m.group(0))
+    prompt += "\nSubmit the completed spec with update_app; after it succeeds, give a short summary."
+    # Do not inherit dashboard tools, interview history or a live chat session.
+    fields = ("messages", "sub_client", "sub_lang", "new_charts", "new_questions", "app_build_draft")
+    previous = {key: getattr(proj, key, None) for key in fields}
+    proj.messages, proj.sub_client, proj.sub_lang = [], None, None
+    proj.new_charts, proj.new_questions, proj.app_build_draft = [], [], {}
     try:
-        validate_app_spec(spec)
-    except ValueError as exc:
-        raise RuntimeError(T(lang, "err_app_invalid")) from exc
-    spec["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
-    proj.app = spec
-    proj.save_app()
+        for attempt in range(2):
+            if proj.job_id and jobs.is_cancelled(proj.job_id):
+                raise CancelledByUser()
+            result = (await run_agent_subscription(proj, prompt)
+                      if AI_BACKEND == "subscription"
+                      else await run_in_threadpool(run_agent_api, proj, prompt))
+            if proj.job_id and jobs.is_cancelled(proj.job_id):
+                raise CancelledByUser()
+            try:
+                spec = proj.app_build_draft.get("spec")
+                if spec is None:
+                    # Support older/model-specific replies that return JSON directly.
+                    match = re.search(r"\{.*\}", result.get("reply", ""), re.DOTALL)
+                    if not match:
+                        raise ValueError("No app was submitted. Call update_app with the complete spec.")
+                    spec = json.loads(match.group(0))
+                validate_app_spec(spec)
+                break
+            except ValueError as exc:
+                log.warning("[%s] app: invalid build output (attempt %s): %s", pid, attempt + 1, exc)
+                if attempt:
+                    raise RuntimeError(T(lang, "err_app_invalid")) from exc
+                proj.log_activity("info", T(lang, "act_app_repairing"))
+                prompt = ("The app could not be validated: " + str(exc) +
+                          "\nCorrect it and submit the complete spec with update_app. Keep the selected brief.")
+        if proj.job_id and jobs.is_cancelled(proj.job_id):
+            raise CancelledByUser()
+        spec["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
+        old_app = proj.app
+        proj.app = spec
+        try:
+            proj.save_app()
+        except Exception:
+            proj.app = old_app
+            raise
+        proj.app_touched = True
+    finally:
+        build_client = proj.sub_client
+        for key, value in previous.items():
+            setattr(proj, key, value)
+        if build_client is not None:
+            try:
+                await build_client.disconnect()
+            except Exception:
+                log.info("[%s] app: could not close build session", pid)
     log.info(f"[{pid}] app: done in {time.monotonic() - t0:.1f}s — "
              f"{len(spec.get('views', []))} view(s): {[v.get('type') for v in spec.get('views', [])]}")
     proj.log_activity("info", T(lang, "act_app_ready"))

@@ -30,7 +30,8 @@ MSG: dict = {
         "act_app_thinking": "🧩 Разглеждам данните и мисля какво приложение би помогнало…",
         "act_app_designing": "🧩 Проектирам приложението от данните…",
         "act_app_ready": "🧩 Приложението е готово",
-        "err_app_invalid": "AI-ят не върна валидна спецификация за приложението.",
+        "act_app_repairing": "🧩 Проверявам и поправям приложението преди записване…",
+        "err_app_invalid": "Не успях да завърша приложението. Опитай отново или уточни какво искаш да прави.",
         "act_translating": "🌐 Превеждам съдържанието на дашборда ({n} текста)…",
         "act_translated": "🌐 Преведох {n} текста",
         # auth / projects
@@ -107,6 +108,11 @@ MSG: dict = {
     },
     "en": {
         "act_app_updated": "🧩 Updated the app: {what}",
+        "act_app_thinking": "🧩 Reviewing your data to suggest a useful app…",
+        "act_app_designing": "🧩 Building the app from your data…",
+        "act_app_ready": "🧩 The app is ready",
+        "act_app_repairing": "🧩 Checking and fixing the app before saving…",
+        "err_app_invalid": "I couldn't finish the app. Try again or clarify what you want it to do.",
         "app_form_invalid": "This form could not be loaded. Refresh the app and try again.",
         "app_record_invalid": "Changes were not saved. Check the values and required fields.",
         "app_record_conflict": "This record changed after you opened it. Select it again and reapply your changes.",
