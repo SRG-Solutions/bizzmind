@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+from functools import lru_cache
 
 import db
 import jobs
@@ -468,14 +469,34 @@ TOOLS = [
 TOOL_DESC = {t["name"]: t["description"] for t in TOOLS}
 
 
+@lru_cache(maxsize=2)
+def api_tools(scope: str = "dashboard") -> list[dict]:
+    """Compile strict API schemas without weakening our execution validation.
+
+    The API only accepts a subset of JSON Schema. The SDK moves unsupported
+    constraints (e.g. maxItems/pattern) into descriptions; TOOLS stays intact.
+    """
+    from anthropic import transform_schema
+
+    return [dict(t, input_schema=transform_schema(t["input_schema"]))
+            for t in TOOLS if scope != "app" or t["name"] in APP_CHAT_TOOLS]
+
+
+@lru_cache(maxsize=1)
+def _tool_validators():
+    from jsonschema import Draft202012Validator
+
+    return {t["name"]: Draft202012Validator(t["input_schema"]) for t in TOOLS}
+
+
 def execute_tool(proj: Project, name: str, tool_input: dict) -> tuple:
     """Returns (content, is_error)."""
     t0 = time.monotonic()
     content, is_error = _execute_tool_inner(proj, name, tool_input)
     ms = int((time.monotonic() - t0) * 1000)
     status = "ERROR" if is_error else "ok"
-    detail = _short(tool_input.get("sql") or tool_input.get("note")
-                    or tool_input.get("id") or "")
+    args = tool_input if isinstance(tool_input, dict) else {}
+    detail = _short(args.get("sql") or args.get("note") or args.get("id") or "")
     log.info(f"[{proj.id}] tool {name} [{status}, {ms}ms] {detail}"
              + (f" -> {_short(content, 100)}" if is_error or name != "run_sql_query" else ""))
     L = proj.lang
@@ -485,7 +506,7 @@ def execute_tool(proj: Project, name: str, tool_input: dict) -> tuple:
     elif is_error and name == "run_sql_query":
         proj.log_activity("sql", T(L, "act_sql_retry"))
     elif is_error:
-        proj.log_activity("error", T(L, "act_tool_error", name=name, detail=_short(content, 90)))
+        proj.log_activity("error", T(L, "act_tool_error"))
     elif name == "run_sql_query":
         purpose = (tool_input.get("purpose") or "").strip()
         proj.log_activity("sql", T(L, "act_sql_purpose", what=_short(purpose, 90)) if purpose
@@ -514,6 +535,15 @@ def _execute_tool_inner(proj: Project, name: str, tool_input: dict) -> tuple:
     try:
         if getattr(proj, "chat_scope", "dashboard") == "app" and name not in APP_CHAT_TOOLS:
             return json.dumps({"error": "This conversation can only build the app. Use update_app or ask a workflow question."}), True
+        validator = _tool_validators().get(name)
+        if validator is not None:
+            error = next(validator.iter_errors(tool_input), None)
+            if error is not None:
+                path = ".".join(str(part) for part in error.absolute_path) or "input"
+                # Return actionable details only to the agent so it can repair
+                # its call. No query, mutation or user-visible diagnostics yet.
+                return json.dumps({"error": f"Invalid {path}: {error.message}",
+                                   "retry": "Correct the arguments and call the tool again."}), True
         if name == "record_data_context":
             proj.notes.append(tool_input["note"])
             proj.save_notes()
@@ -1142,15 +1172,17 @@ def run_agent_api(proj: Project, user_content: str, images: list | None = None):
                     "text": build_system_prompt(proj),
                     "cache_control": {"type": "ephemeral"},
                 }],
-                tools=[t for t in TOOLS if getattr(proj, "chat_scope", "dashboard") != "app" or t["name"] in APP_CHAT_TOOLS],
+                tools=api_tools(getattr(proj, "chat_scope", "dashboard")),
                 messages=proj.messages,
             )
         except anthropic.APIStatusError as e:
+            log.error("[%s] agent API failed (status=%s request_id=%s): %s",
+                      proj.id, e.status_code, e.request_id, e.message)
             if proj.messages and proj.messages[-1]["role"] == "user":
                 proj.messages.pop()
-            raise HTTPException(502, T(proj.lang, "err_ai_failed", detail=e.message))
+            raise RuntimeError(T(proj.lang, "err_ai_failed")) from e
         except anthropic.APIConnectionError:
-            raise HTTPException(502, T(proj.lang, "err_ai_unreachable"))
+            raise RuntimeError(T(proj.lang, "err_ai_unreachable")) from None
 
         # Keep full content blocks (incl. thinking) so multi-step turns replay correctly
         proj.messages.append({"role": "assistant", "content": response.content})

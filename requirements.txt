@@ -1,6 +1,7 @@
 fastapi
 uvicorn
-anthropic
+anthropic>=1.0.0
+jsonschema>=4.18,<5
 pandas
 openpyxl
 python-multipart
